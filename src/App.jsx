@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar } from 'lucide-react';
+import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import Login from './Login';
-import BarcodeScanner from './BarcodeScanner';
+import CameraScanner from './CameraScanner';
 
 const SECTIONS = [
   'Main Hospital',
@@ -29,6 +29,8 @@ function App() {
   const [scanMode, setScanMode] = useState(false);
   const [scanInput, setScanInput] = useState('');
   const [showCameraScanner, setShowCameraScanner] = useState(false);
+  const [adminMode, setAdminMode] = useState(false);
+  const [inspectionLogs, setInspectionLogs] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
   const [editItem, setEditItem] = useState(null);
   const [showMenu, setShowMenu] = useState(false);
@@ -242,38 +244,39 @@ function App() {
 
     const reader = new FileReader();
     
-    reader.onload = async (event) => {
-      try {
-        const data = new Uint8Array(event.target.result);
-        const workbook = XLSX.read(data, { type: 'array' });
-        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-        const jsonData = XLSX.utils.sheet_to_json(firstSheet);
+    reader.onload = (event) => {
+      const processFile = async () => {
+        try {
+          const data = new Uint8Array(event.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          const jsonData = XLSX.utils.sheet_to_json(firstSheet);
 
-        const parsed = jsonData.map((row, index) => {
-          const assetId = row['Asset ID'] || row['Asset\nID'] || row['AssetID'] || '';
-          const vicinity = row['Vicinity'] || '';
-          const serial = row['Serial'] || '';
-          const parentLocation = row['Parent Location'] || row['Parent\nLocation'] || '';
+          const parsed = jsonData.map((row, index) => {
+            const assetId = row['Asset ID'] || row['Asset\nID'] || row['AssetID'] || '';
+            const vicinity = row['Vicinity'] || '';
+            const serial = row['Serial'] || '';
+            const parentLocation = row['Parent Location'] || row['Parent\nLocation'] || '';
 
-          return {
-            assetId: String(assetId),
-            vicinity,
-            serial,
-            parentLocation,
-            section: importSection,
-            status: 'pending',
-            checkedDate: null,
-            notes: '',
-            inspectionHistory: [],
-            userId: user.uid,
-            createdAt: new Date().toISOString()
-          };
-        }).filter(item => item.assetId);
+            return {
+              assetId: String(assetId),
+              vicinity,
+              serial,
+              parentLocation,
+              section: importSection,
+              status: 'pending',
+              checkedDate: null,
+              notes: '',
+              inspectionHistory: [],
+              userId: user.uid,
+              createdAt: new Date().toISOString()
+            };
+          }).filter(item => item.assetId);
 
-        // Add each item to Firestore
-        for (const item of parsed) {
-          try {
-            await addDoc(collection(db, 'extinguishers'), item);
+          // Add each item to Firestore
+          for (const item of parsed) {
+            try {
+              await addDoc(collection(db, 'extinguishers'), item);
           } catch (error) {
             console.error('Error adding item:', error);
           }
@@ -281,10 +284,13 @@ function App() {
 
         setShowImportModal(false);
         alert(`Successfully imported ${parsed.length} fire extinguishers to ${importSection}!`);
-      } catch (error) {
-        alert('Error reading file. Please make sure it is a valid CSV or Excel file.');
-        console.error(error);
-      }
+        } catch (error) {
+          alert('Error reading file. Please make sure it is a valid CSV or Excel file.');
+          console.error(error);
+        }
+      };
+
+      processFile();
     };
 
     reader.readAsArrayBuffer(file);
@@ -354,43 +360,86 @@ function App() {
 
   const handleScan = (e) => {
     e.preventDefault();
-    const searchValue = scanInput.trim().toLowerCase();
+    const searchValue = scanInput.trim();
 
-    if (!searchValue) return;
+    if (!searchValue) {
+      alert('Please enter something to search for');
+      return;
+    }
 
-    const found = extinguishers.find(item =>
-      item.assetId.toLowerCase() === searchValue ||
-      item.serial.toLowerCase() === searchValue ||
-      item.assetId.toLowerCase().includes(searchValue) ||
-      item.serial.toLowerCase().includes(searchValue)
-    );
+    console.log('=== SEARCH DEBUG ===');
+    console.log('Searching for:', searchValue);
+    console.log('Total extinguishers loaded:', extinguishers.length);
+
+    if (extinguishers.length === 0) {
+      alert('No extinguishers loaded in database. Please import data first.');
+      return;
+    }
+
+    // Show first few extinguishers for debugging
+    console.log('Sample extinguishers:', extinguishers.slice(0, 3));
+
+    // Simple search
+    const searchLower = searchValue.toLowerCase();
+    const found = extinguishers.find(item => {
+      const assetId = String(item.assetId || '').toLowerCase();
+      const serial = String(item.serial || '').toLowerCase();
+
+      console.log('Checking item:', { assetId, serial, searchLower });
+
+      return assetId.includes(searchLower) || serial.includes(searchLower);
+    });
+
+    console.log('Search result:', found);
 
     if (found) {
       setSelectedItem(found);
       setScanInput('');
       setScanMode(false);
+      alert('Found! Opening fire extinguisher details.');
     } else {
-      alert(`No fire extinguisher found matching: ${scanInput}`);
-      setScanInput('');
+      // Show what we actually have for debugging
+      const allAssetIds = extinguishers.map(item => item.assetId).slice(0, 5);
+      alert(`NOT FOUND: "${searchValue}"\n\nTotal extinguishers: ${extinguishers.length}\n\nFirst few Asset IDs in database:\n${allAssetIds.join(', ')}\n\nTry typing one of these numbers exactly.`);
+      // Don't clear input so user can try again
     }
   };
 
   const handleCameraScan = (scannedText) => {
-    const searchValue = scannedText.trim().toLowerCase();
+    const searchValue = scannedText.trim();
 
-    const found = extinguishers.find(item =>
-      item.assetId.toLowerCase() === searchValue ||
-      item.serial.toLowerCase() === searchValue ||
-      item.assetId.toLowerCase().includes(searchValue) ||
-      item.serial.toLowerCase().includes(searchValue)
-    );
+    if (!searchValue) {
+      alert('Please enter a value to search for.');
+      return;
+    }
+
+    console.log('=== CAMERA SEARCH DEBUG ===');
+    console.log('Searching for:', searchValue);
+    console.log('Total extinguishers:', extinguishers.length);
+
+    if (extinguishers.length === 0) {
+      alert('No extinguishers loaded. Please import data first.');
+      setShowCameraScanner(false);
+      return;
+    }
+
+    // Simple search
+    const searchLower = searchValue.toLowerCase();
+    const found = extinguishers.find(item => {
+      const assetId = String(item.assetId || '').toLowerCase();
+      const serial = String(item.serial || '').toLowerCase();
+
+      return assetId.includes(searchLower) || serial.includes(searchLower);
+    });
 
     setShowCameraScanner(false);
 
     if (found) {
       setSelectedItem(found);
+      alert('Found! Opening fire extinguisher details.');
     } else {
-      alert(`No fire extinguisher found matching: ${scannedText}`);
+      const allAssetIds = extinguishers.map(item => item.assetId).slice(0, 5);
+      alert(`NOT FOUND: "${searchValue}"\n\nTotal extinguishers: ${extinguishers.length}\n\nFirst few Asset IDs:\n${allAssetIds.join(', ')}`);
     }
   };
 
@@ -521,29 +570,81 @@ function App() {
   };
 
   const resetMonthlyStatus = async () => {
-    if (!window.confirm('Are you sure you want to reset all fire extinguisher statuses to "pending"? This will clear all inspection data for the monthly cycle. This action cannot be undone.')) {
+    console.log('=== MONTHLY RESET DEBUG ===');
+    const currentDate = new Date().toISOString();
+    const currentMonth = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
+    console.log('Current date:', currentDate);
+    console.log('Current month:', currentMonth);
+    console.log('User ID:', user?.uid);
+
+    if (!window.confirm(`Start new monthly inspection cycle for ${currentMonth}?\n\nThis will:\n• Reset all extinguisher statuses to "pending"\n• Save current inspection results to history\n• Keep all extinguisher data intact`)) {
+      console.log('User cancelled reset');
       return;
     }
 
     try {
+      console.log('Starting reset process...');
       const extinguishersQuery = query(
         collection(db, 'extinguishers'),
         where('userId', '==', user.uid)
       );
+      console.log('Created query for user:', user.uid);
 
       const snapshot = await getDocs(extinguishersQuery);
+      console.log('Got snapshot with', snapshot.docs.length, 'documents');
+
+      if (snapshot.docs.length === 0) {
+        alert('No extinguishers found to reset. Please import fire extinguisher data first.');
+        return;
+      }
+
+      // Show current status counts
+      const statusCounts = {
+        pass: snapshot.docs.filter(doc => doc.data().status === 'pass').length,
+        fail: snapshot.docs.filter(doc => doc.data().status === 'fail').length,
+        pending: snapshot.docs.filter(doc => doc.data().status === 'pending').length
+      };
+      console.log('Current status counts:', statusCounts);
+
+      // Create inspection log entry
+      const inspectionLog = {
+        userId: user.uid,
+        resetDate: currentDate,
+        monthYear: currentMonth,
+        totalExtinguishers: snapshot.docs.length,
+        passedCount: statusCounts.pass,
+        failedCount: statusCounts.fail,
+        pendingCount: statusCounts.pending,
+        extinguisherResults: snapshot.docs.map(doc => ({
+          assetId: doc.data().assetId,
+          section: doc.data().section,
+          status: doc.data().status,
+          checkedDate: doc.data().checkedDate,
+          notes: doc.data().notes
+        }))
+      };
+      console.log('Created inspection log:', inspectionLog);
+
+      // Save inspection log
+      console.log('Saving inspection log...');
+      await addDoc(collection(db, 'inspectionLogs'), inspectionLog);
+      console.log('Inspection log saved successfully');
+
+      // Reset all extinguisher statuses
+      console.log('Starting to reset', snapshot.docs.length, 'extinguishers...');
       const updatePromises = snapshot.docs.map(docSnapshot => {
         const docRef = doc(db, 'extinguishers', docSnapshot.id);
         return updateDoc(docRef, {
           status: 'pending',
           checkedDate: null,
           notes: '',
-          lastMonthlyReset: new Date().toISOString()
+          lastMonthlyReset: currentDate
         });
       });
 
       await Promise.all(updatePromises);
-      alert(`Successfully reset ${snapshot.docs.length} fire extinguishers for the new monthly cycle.`);
+      console.log('All extinguisher updates completed');
+      alert(`Monthly cycle reset complete!\n\n• ${snapshot.docs.length} extinguishers reset to "pending"\n• Previous inspection results saved to history\n• Ready for ${currentMonth} inspections`);
 
     } catch (error) {
       console.error('Error resetting monthly status:', error);
@@ -551,17 +652,97 @@ function App() {
     }
   };
 
-  const filteredItems = extinguishers.filter(item => {
-    const matchesSection = item.section === selectedSection;
-    const matchesView = view === 'pending' ? item.status === 'pending' :
-                       view === 'pass' ? item.status === 'pass' :
-                       view === 'fail' ? item.status === 'fail' : true;
-    const matchesSearch = searchTerm === '' || 
-      item.assetId.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.vicinity.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.serial.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesSection && matchesView && matchesSearch;
-  });
+  // Smart sorting function for walking order
+  const sortExtinguishersByLocation = (items) => {
+    if (!items || !Array.isArray(items)) return [];
+
+    return items.sort((a, b) => {
+      try {
+      // Extract floor numbers from vicinity/parentLocation
+      const getFloorNumber = (item) => {
+        const vicinity = item.vicinity || '';
+        const parentLocation = item.parentLocation || '';
+        const text = `${vicinity} ${parentLocation}`.toLowerCase();
+
+        // Look for floor patterns
+        if (text.includes('ground') || text.includes('1st') || text.includes('first')) return 1;
+        if (text.includes('2nd') || text.includes('second')) return 2;
+        if (text.includes('3rd') || text.includes('third')) return 3;
+        if (text.includes('4th') || text.includes('fourth')) return 4;
+        if (text.includes('5th') || text.includes('fifth')) return 5;
+        if (text.includes('6th') || text.includes('sixth')) return 6;
+        if (text.includes('7th') || text.includes('seventh')) return 7;
+        if (text.includes('8th') || text.includes('eighth')) return 8;
+        if (text.includes('basement') || text.includes('b1') || text.includes('lower')) return 0;
+
+        // Look for numeric patterns like "Floor 5", "5F", "L5"
+        const floorMatch = text.match(/(?:floor\s*|f|l)?(\d+)/);
+        if (floorMatch) return parseInt(floorMatch[1]);
+
+        // Default to middle floor if no pattern found
+        return 3;
+      };
+
+      const floorA = getFloorNumber(a);
+      const floorB = getFloorNumber(b);
+
+      // Sort by floor first
+      if (floorA !== floorB) {
+        return floorA - floorB;
+      }
+
+      // Then by vicinity alphabetically
+      const vicinityA = (a.vicinity || '').toLowerCase();
+      const vicinityB = (b.vicinity || '').toLowerCase();
+
+      // Look for room numbers
+      const getRoomNumber = (vicinity) => {
+        if (!vicinity) return 999;
+        const roomMatch = vicinity.match(/(\d+)/);
+        return roomMatch ? parseInt(roomMatch[1]) : 999;
+      };
+
+      const roomA = getRoomNumber(vicinityA);
+      const roomB = getRoomNumber(vicinityB);
+
+      if (roomA !== roomB) {
+        return roomA - roomB;
+      }
+
+      // Finally by vicinity name
+      return vicinityA.localeCompare(vicinityB);
+      } catch (error) {
+        console.error('Sorting error:', error);
+        return 0; // Keep original order if sorting fails
+      }
+    });
+  };
+
+  const filteredItems = (() => {
+    try {
+      const filtered = extinguishers.filter(item => {
+        if (!item) return false;
+
+        const matchesSection = selectedSection === 'All' || item.section === selectedSection;
+        const matchesView = view === 'pending' ? item.status === 'pending' :
+                           view === 'pass' ? item.status === 'pass' :
+                           view === 'fail' ? item.status === 'fail' : true;
+
+        const searchLower = searchTerm.toLowerCase();
+        const matchesSearch = searchTerm === '' ||
+          (item.assetId || '').toLowerCase().includes(searchLower) ||
+          (item.vicinity || '').toLowerCase().includes(searchLower) ||
+          (item.serial || '').toLowerCase().includes(searchLower);
+
+        return matchesSection && matchesView && matchesSearch;
+      });
+
+      return sortExtinguishersByLocation(filtered);
+    } catch (error) {
+      console.error('Filtering error:', error);
+      return []; // Return empty array if filtering fails
+    }
+  })();
 
   const stats = {
     total: extinguishers.length,
@@ -612,6 +793,13 @@ function App() {
             </div>
             <div className="flex gap-2">
               <button
+                onClick={() => setAdminMode(!adminMode)}
+                className={`p-2 hover:bg-blue-700 rounded flex items-center gap-2 ${adminMode ? 'bg-blue-700' : ''}`}
+                title={adminMode ? 'Exit Admin Mode' : 'Admin Mode'}
+              >
+                <Settings size={20} />
+              </button>
+              <button
                 onClick={handleLogout}
                 className="p-2 hover:bg-blue-700 rounded flex items-center gap-2"
                 title="Logout"
@@ -628,85 +816,105 @@ function App() {
           </div>
         </div>
 
-        <div className="bg-white p-4 rounded-lg shadow-lg mb-6">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Clock size={20} className="text-gray-600" />
-              <h3 className="font-semibold text-lg">Time Tracking - {selectedSection}</h3>
-            </div>
-            <button
-              onClick={() => setShowTimeModal(true)}
-              className="text-sm text-blue-600 hover:underline"
-            >
-              View All Times
-            </button>
-          </div>
-          
-          <div className="flex items-center gap-4">
-            <div className="flex-1">
-              <div className="text-3xl font-bold text-blue-600">
-                {formatTime(getTotalTime(selectedSection))}
+        {selectedSection !== 'All' && (
+          <div className="bg-white p-4 rounded-lg shadow-lg mb-6">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Clock size={20} className="text-gray-600" />
+                <h3 className="font-semibold text-lg">Time Tracking - {selectedSection}</h3>
               </div>
-              <div className="text-sm text-gray-600">
-                {Math.round(getTotalTime(selectedSection) / 60000)} minutes
+              <button
+                onClick={() => setShowTimeModal(true)}
+                className="text-sm text-blue-600 hover:underline"
+              >
+                View All Times
+              </button>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <div className="flex-1">
+                <div className="text-3xl font-bold text-blue-600">
+                  {formatTime(getTotalTime(selectedSection))}
+                </div>
+                <div className="text-sm text-gray-600">
+                  {Math.round(getTotalTime(selectedSection) / 60000)} minutes
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                {activeTimer === selectedSection ? (
+                  <button
+                    onClick={pauseTimer}
+                    className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600"
+                  >
+                    <Pause size={20} />
+                    Pause
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => startTimer(selectedSection)}
+                    className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+                  >
+                    <Play size={20} />
+                    Start Timer
+                  </button>
+                )}
+
+                {activeTimer && (
+                  <button
+                    onClick={stopTimer}
+                    className="flex items-center gap-2 px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+                  >
+                    <StopCircle size={20} />
+                    Stop
+                  </button>
+                )}
               </div>
             </div>
-            
-            <div className="flex gap-2">
-              {activeTimer === selectedSection ? (
-                <button
-                  onClick={pauseTimer}
-                  className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600"
-                >
-                  <Pause size={20} />
-                  Pause
-                </button>
-              ) : (
-                <button
-                  onClick={() => startTimer(selectedSection)}
-                  className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
-                >
-                  <Play size={20} />
-                  Start Timer
-                </button>
-              )}
-              
-              {activeTimer && (
-                <button
-                  onClick={stopTimer}
-                  className="flex items-center gap-2 px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
-                >
-                  <StopCircle size={20} />
-                  Stop
-                </button>
-              )}
-            </div>
           </div>
-        </div>
+        )}
 
         {showMenu && (
           <div className="bg-white p-4 rounded-lg shadow-lg mb-6">
             <div className="space-y-2">
               <button
-                onClick={() => {
-                  setShowImportModal(true);
-                  setShowMenu(false);
-                }}
+                onClick={resetMonthlyStatus}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition w-full"
               >
-                <Upload size={20} />
-                Import Data File (By Section)
+                <RotateCcw size={20} />
+                Start New Monthly Cycle
               </button>
-              <button
-                onClick={() => {
-                  setShowAddModal(true);
-                  setShowMenu(false);
-                }}
-                className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 transition w-full"
-              >
-                <Plus size={20} />
-                Add New Fire Extinguisher
-              </button>
+
+              {adminMode && (
+                <>
+                  <div className="border-t pt-2 mt-4">
+                    <p className="text-sm text-gray-600 mb-2 font-medium">Database Management (Admin)</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setShowImportModal(true);
+                      setShowMenu(false);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition w-full"
+                  >
+                    <Upload size={20} />
+                    Import Data File (By Section)
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowAddModal(true);
+                      setShowMenu(false);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 transition w-full"
+                  >
+                    <Plus size={20} />
+                    Add New Fire Extinguisher
+                  </button>
+                </>)}
+
+              <div className="border-t pt-2 mt-4">
+                <p className="text-sm text-gray-600 mb-2 font-medium">Export Data</p>
+              </div>
               <button
                 onClick={() => exportData('all')}
                 className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 transition w-full"
@@ -735,19 +943,18 @@ function App() {
                 <Clock size={20} />
                 Export Time Data
               </button>
-              <button
-                onClick={resetMonthlyStatus}
-                className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 transition w-full"
-              >
-                <Calendar size={20} />
-                Monthly Reset
-              </button>
-              <button
-                onClick={clearAllData}
-                className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition w-full"
-              >
-                Clear All Data
-              </button>
+              {adminMode && (
+                <>
+                  <div className="border-t pt-2 mt-4">
+                    <p className="text-sm text-gray-600 mb-2 font-medium text-red-600">Danger Zone (Admin Only)</p>
+                  </div>
+                  <button
+                    onClick={clearAllData}
+                    className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition w-full"
+                  >
+                    Clear All Data
+                  </button>
+                </>)}
             </div>
           </div>
         )}
@@ -796,6 +1003,25 @@ function App() {
             <h3 className="font-semibold text-lg">Section Filter</h3>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+            {/* All Sections Button */}
+            <button
+              onClick={() => setSelectedSection('All')}
+              className={`p-3 rounded-lg border-2 transition ${
+                selectedSection === 'All'
+                  ? 'border-green-500 bg-green-50'
+                  : 'border-gray-200 hover:border-green-300'
+              }`}
+            >
+              <div className="font-medium text-sm mb-1">🔍 All Sections</div>
+              <div className="text-xs text-gray-600">
+                <div>Total: {extinguishers.length}</div>
+                <div>Pending: {extinguishers.filter(item => item.status === 'pending').length}</div>
+                <div className="text-green-600 font-semibold mt-1">
+                  Search All
+                </div>
+              </div>
+            </button>
+
             {sectionCounts.map(({ section, total, pending, pass, fail }) => (
               <button
                 key={section}
@@ -1179,7 +1405,7 @@ function App() {
         </div>
       )}
 
-      <BarcodeScanner
+      <CameraScanner
         isOpen={showCameraScanner}
         onScan={handleCameraScan}
         onClose={() => setShowCameraScanner(false)}
