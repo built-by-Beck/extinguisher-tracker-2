@@ -339,13 +339,14 @@ function App() {
     }
   };
 
-  const handleInspection = async (item, status, notes = '') => {
+  const handleInspection = async (item, status, notes = '', inspectionData = null) => {
     try {
       const inspection = {
         date: new Date().toISOString(),
         status,
         notes,
-        inspector: user.email || 'Current User'
+        inspector: user.email || 'Current User',
+        checklistData: inspectionData?.checklistData || null
       };
 
       const docRef = doc(db, 'extinguishers', item.id);
@@ -353,6 +354,7 @@ function App() {
         status,
         checkedDate: new Date().toISOString(),
         notes,
+        checklistData: inspectionData?.checklistData || null,
         inspectionHistory: [...(item.inspectionHistory || []), inspection]
       });
 
@@ -503,7 +505,7 @@ function App() {
 
   const exportData = (type = 'all') => {
     let dataToExport;
-    
+
     if (type === 'passed') {
       dataToExport = extinguishers.filter(e => e.status === 'pass');
     } else if (type === 'failed') {
@@ -512,16 +514,41 @@ function App() {
       dataToExport = extinguishers;
     }
 
-    const formatted = dataToExport.map(item => ({
-      'Asset ID': item.assetId,
-      'Serial': item.serial,
-      'Vicinity': item.vicinity,
-      'Parent Location': item.parentLocation,
-      'Section': item.section,
-      'Status': item.status.toUpperCase(),
-      'Checked Date': item.checkedDate ? new Date(item.checkedDate).toLocaleString() : '',
-      'Notes': item.notes
-    }));
+    const formatted = dataToExport.map(item => {
+      const baseData = {
+        'Asset ID': item.assetId,
+        'Serial': item.serial,
+        'Vicinity': item.vicinity,
+        'Parent Location': item.parentLocation,
+        'Section': item.section,
+        'Status': item.status.toUpperCase(),
+        'Checked Date': item.checkedDate ? new Date(item.checkedDate).toLocaleString() : '',
+      };
+
+      // Add checklist details if available
+      if (item.checklistData) {
+        const checklist = item.checklistData;
+        return {
+          ...baseData,
+          'Pin Present': checklist.pinPresent || '',
+          'Tamper Seal Intact': checklist.tamperSealIntact || '',
+          'Gauge Correct Pressure': checklist.gaugeCorrectPressure || '',
+          'Weight Correct': checklist.weightCorrect || '',
+          'No Damage': checklist.noDamage || '',
+          'In Designated Location': checklist.inDesignatedLocation || '',
+          'Clearly Visible': checklist.clearlyVisible || '',
+          'Nearest Under 75ft': checklist.nearestUnder75ft || '',
+          'Top Under 5ft': checklist.topUnder5ft || '',
+          'Bottom Over 4in': checklist.bottomOver4in || '',
+          'Mounted Securely': checklist.mountedSecurely || '',
+          'Inspection Within 30 Days': checklist.inspectionWithin30Days || '',
+          'Tag Signed & Dated': checklist.tagSignedDated || '',
+          'Notes': item.notes
+        };
+      }
+
+      return { ...baseData, 'Notes': item.notes };
+    });
 
     const ws = XLSX.utils.json_to_sheet(formatted);
     const wb = XLSX.utils.book_new();
@@ -592,8 +619,8 @@ function App() {
   };
 
   // helpers for SectionDetail actions
-  const handlePass = (item, notesSummary = '') => handleInspection(item, 'pass', notesSummary);
-  const handleFail = (item, notesSummary = '') => handleInspection(item, 'fail', notesSummary);
+  const handlePass = (item, notesSummary = '', inspectionData = null) => handleInspection(item, 'pass', notesSummary, inspectionData);
+  const handleFail = (item, notesSummary = '', inspectionData = null) => handleInspection(item, 'fail', notesSummary, inspectionData);
   const handleSaveNotes = async (item, notesSummary) => {
     try {
       const docRef = doc(db, 'extinguishers', item.id);

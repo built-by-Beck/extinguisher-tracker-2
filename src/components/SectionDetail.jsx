@@ -10,19 +10,19 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
   const scanRef = useRef(null);
   const [activeItem, setActiveItem] = useState(null);
   const [checklist, setChecklist] = useState({
-    pinPresent: true,
-    tamperSealIntact: true,
-    gaugeCorrectPressure: true,
-    weightCorrect: true,
-    noDamage: true,
-    inDesignatedLocation: true,
-    clearlyVisible: true,
-    nearestUnder75ft: true,
-    topUnder5ft: true,
-    bottomOver4in: true,
-    mountedSecurely: true,
-    inspectionWithin30Days: true,
-    tagSignedDated: true
+    pinPresent: 'pass',
+    tamperSealIntact: 'pass',
+    gaugeCorrectPressure: 'pass',
+    weightCorrect: 'pass',
+    noDamage: 'pass',
+    inDesignatedLocation: 'pass',
+    clearlyVisible: 'pass',
+    nearestUnder75ft: 'pass',
+    topUnder5ft: 'pass',
+    bottomOver4in: 'pass',
+    mountedSecurely: 'pass',
+    inspectionWithin30Days: 'pass',
+    tagSignedDated: 'pass'
   });
   const [notes, setNotes] = useState('');
 
@@ -59,29 +59,48 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
     const match = findByScan(scanValue);
     if (match) {
       setActiveItem(match);
-      setChecklist({
-        pinPresent: true,
-        tamperSealIntact: true,
-        gaugeCorrectPressure: true,
-        weightCorrect: true,
-        noDamage: true,
-        inDesignatedLocation: true,
-        clearlyVisible: true,
-        nearestUnder75ft: true,
-        topUnder5ft: true,
-        bottomOver4in: true,
-        mountedSecurely: true,
-        inspectionWithin30Days: true,
-        tagSignedDated: true
-      });
-      setNotes('');
+      // Load existing checklist data if available
+      if (match.checklistData) {
+        setChecklist(match.checklistData);
+      } else {
+        setChecklist({
+          pinPresent: 'pass',
+          tamperSealIntact: 'pass',
+          gaugeCorrectPressure: 'pass',
+          weightCorrect: 'pass',
+          noDamage: 'pass',
+          inDesignatedLocation: 'pass',
+          clearlyVisible: 'pass',
+          nearestUnder75ft: 'pass',
+          topUnder5ft: 'pass',
+          bottomOver4in: 'pass',
+          mountedSecurely: 'pass',
+          inspectionWithin30Days: 'pass',
+          tagSignedDated: 'pass'
+        });
+      }
+      setNotes(match.notes || '');
     }
     setScanValue('');
   };
 
   const checklistSummary = () => {
-    const issues = Object.entries(checklist).filter(([, ok]) => !ok).map(([k]) => k).join(', ');
-    return issues ? `Issues: ${issues}. ${notes}`.trim() : notes;
+    const failed = Object.entries(checklist).filter(([, status]) => status === 'fail').map(([k]) => k);
+    return failed.length > 0 ? `Failed items: ${failed.join(', ')}. ${notes}`.trim() : notes;
+  };
+
+  const saveInspection = (status) => {
+    const inspectionData = {
+      checklistData: checklist,
+      notes: notes
+    };
+
+    if (status === 'pass') {
+      onPass?.(activeItem, checklistSummary(), inspectionData);
+    } else {
+      onFail?.(activeItem, checklistSummary(), inspectionData);
+    }
+    setActiveItem(null);
   };
 
   return (
@@ -145,41 +164,119 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
             {/* Basic Monthly Check */}
             <div className="mb-4">
               <h4 className="font-semibold text-md mb-2 text-gray-700 border-b pb-1">Basic Monthly Check</h4>
-              <div className="space-y-1">
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.pinPresent} onChange={(e)=>setChecklist(c=>({...c,pinPresent:e.target.checked}))} /> Pin Present</label>
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.tamperSealIntact} onChange={(e)=>setChecklist(c=>({...c,tamperSealIntact:e.target.checked}))} /> Tamper Seal Intact</label>
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.gaugeCorrectPressure} onChange={(e)=>setChecklist(c=>({...c,gaugeCorrectPressure:e.target.checked}))} /> Gauge Shows Correct Pressure</label>
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.weightCorrect} onChange={(e)=>setChecklist(c=>({...c,weightCorrect:e.target.checked}))} /> Weight feels correct</label>
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.noDamage} onChange={(e)=>setChecklist(c=>({...c,noDamage:e.target.checked}))} /> No Visible Damage, Corrosion, or Leakage</label>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Pin Present</span>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-1"><input type="radio" name="pinPresent" checked={checklist.pinPresent === 'pass'} onChange={()=>setChecklist(c=>({...c,pinPresent:'pass'}))} /><span className="text-xs text-green-600">Pass</span></label>
+                    <label className="flex items-center gap-1"><input type="radio" name="pinPresent" checked={checklist.pinPresent === 'fail'} onChange={()=>setChecklist(c=>({...c,pinPresent:'fail'}))} /><span className="text-xs text-red-600">Fail</span></label>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Tamper Seal Intact</span>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-1"><input type="radio" name="tamperSealIntact" checked={checklist.tamperSealIntact === 'pass'} onChange={()=>setChecklist(c=>({...c,tamperSealIntact:'pass'}))} /><span className="text-xs text-green-600">Pass</span></label>
+                    <label className="flex items-center gap-1"><input type="radio" name="tamperSealIntact" checked={checklist.tamperSealIntact === 'fail'} onChange={()=>setChecklist(c=>({...c,tamperSealIntact:'fail'}))} /><span className="text-xs text-red-600">Fail</span></label>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Gauge Shows Correct Pressure</span>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-1"><input type="radio" name="gaugeCorrectPressure" checked={checklist.gaugeCorrectPressure === 'pass'} onChange={()=>setChecklist(c=>({...c,gaugeCorrectPressure:'pass'}))} /><span className="text-xs text-green-600">Pass</span></label>
+                    <label className="flex items-center gap-1"><input type="radio" name="gaugeCorrectPressure" checked={checklist.gaugeCorrectPressure === 'fail'} onChange={()=>setChecklist(c=>({...c,gaugeCorrectPressure:'fail'}))} /><span className="text-xs text-red-600">Fail</span></label>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Weight feels correct</span>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-1"><input type="radio" name="weightCorrect" checked={checklist.weightCorrect === 'pass'} onChange={()=>setChecklist(c=>({...c,weightCorrect:'pass'}))} /><span className="text-xs text-green-600">Pass</span></label>
+                    <label className="flex items-center gap-1"><input type="radio" name="weightCorrect" checked={checklist.weightCorrect === 'fail'} onChange={()=>setChecklist(c=>({...c,weightCorrect:'fail'}))} /><span className="text-xs text-red-600">Fail</span></label>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">No Visible Damage, Corrosion, or Leakage</span>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-1"><input type="radio" name="noDamage" checked={checklist.noDamage === 'pass'} onChange={()=>setChecklist(c=>({...c,noDamage:'pass'}))} /><span className="text-xs text-green-600">Pass</span></label>
+                    <label className="flex items-center gap-1"><input type="radio" name="noDamage" checked={checklist.noDamage === 'fail'} onChange={()=>setChecklist(c=>({...c,noDamage:'fail'}))} /><span className="text-xs text-red-600">Fail</span></label>
+                  </div>
+                </div>
               </div>
             </div>
 
             {/* Location & Accessibility */}
             <div className="mb-4">
               <h4 className="font-semibold text-md mb-2 text-gray-700 border-b pb-1">Location & Accessibility</h4>
-              <div className="space-y-1">
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.inDesignatedLocation} onChange={(e)=>setChecklist(c=>({...c,inDesignatedLocation:e.target.checked}))} /> Extinguisher in designated location</label>
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.clearlyVisible} onChange={(e)=>setChecklist(c=>({...c,clearlyVisible:e.target.checked}))} /> Clearly Visible with no Obstructions</label>
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.nearestUnder75ft} onChange={(e)=>setChecklist(c=>({...c,nearestUnder75ft:e.target.checked}))} /> Nearest extinguisher not over 75ft away</label>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Extinguisher in designated location</span>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-1"><input type="radio" name="inDesignatedLocation" checked={checklist.inDesignatedLocation === 'pass'} onChange={()=>setChecklist(c=>({...c,inDesignatedLocation:'pass'}))} /><span className="text-xs text-green-600">Pass</span></label>
+                    <label className="flex items-center gap-1"><input type="radio" name="inDesignatedLocation" checked={checklist.inDesignatedLocation === 'fail'} onChange={()=>setChecklist(c=>({...c,inDesignatedLocation:'fail'}))} /><span className="text-xs text-red-600">Fail</span></label>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Clearly Visible with no Obstructions</span>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-1"><input type="radio" name="clearlyVisible" checked={checklist.clearlyVisible === 'pass'} onChange={()=>setChecklist(c=>({...c,clearlyVisible:'pass'}))} /><span className="text-xs text-green-600">Pass</span></label>
+                    <label className="flex items-center gap-1"><input type="radio" name="clearlyVisible" checked={checklist.clearlyVisible === 'fail'} onChange={()=>setChecklist(c=>({...c,clearlyVisible:'fail'}))} /><span className="text-xs text-red-600">Fail</span></label>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Nearest extinguisher not over 75ft away</span>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-1"><input type="radio" name="nearestUnder75ft" checked={checklist.nearestUnder75ft === 'pass'} onChange={()=>setChecklist(c=>({...c,nearestUnder75ft:'pass'}))} /><span className="text-xs text-green-600">Pass</span></label>
+                    <label className="flex items-center gap-1"><input type="radio" name="nearestUnder75ft" checked={checklist.nearestUnder75ft === 'fail'} onChange={()=>setChecklist(c=>({...c,nearestUnder75ft:'fail'}))} /><span className="text-xs text-red-600">Fail</span></label>
+                  </div>
+                </div>
               </div>
             </div>
 
             {/* Mounting & Height */}
             <div className="mb-4">
               <h4 className="font-semibold text-md mb-2 text-gray-700 border-b pb-1">Mounting & Height</h4>
-              <div className="space-y-1">
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.topUnder5ft} onChange={(e)=>setChecklist(c=>({...c,topUnder5ft:e.target.checked}))} /> Top &lt;= 5ft (if &lt;= 40lb)</label>
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.bottomOver4in} onChange={(e)=>setChecklist(c=>({...c,bottomOver4in:e.target.checked}))} /> Bottom &gt;= 4 inches from floor</label>
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.mountedSecurely} onChange={(e)=>setChecklist(c=>({...c,mountedSecurely:e.target.checked}))} /> Mounted securely on hanger or in Cabinet</label>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Top &lt;= 5ft (if &lt;= 40lb)</span>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-1"><input type="radio" name="topUnder5ft" checked={checklist.topUnder5ft === 'pass'} onChange={()=>setChecklist(c=>({...c,topUnder5ft:'pass'}))} /><span className="text-xs text-green-600">Pass</span></label>
+                    <label className="flex items-center gap-1"><input type="radio" name="topUnder5ft" checked={checklist.topUnder5ft === 'fail'} onChange={()=>setChecklist(c=>({...c,topUnder5ft:'fail'}))} /><span className="text-xs text-red-600">Fail</span></label>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Bottom &gt;= 4 inches from floor</span>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-1"><input type="radio" name="bottomOver4in" checked={checklist.bottomOver4in === 'pass'} onChange={()=>setChecklist(c=>({...c,bottomOver4in:'pass'}))} /><span className="text-xs text-green-600">Pass</span></label>
+                    <label className="flex items-center gap-1"><input type="radio" name="bottomOver4in" checked={checklist.bottomOver4in === 'fail'} onChange={()=>setChecklist(c=>({...c,bottomOver4in:'fail'}))} /><span className="text-xs text-red-600">Fail</span></label>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Mounted securely on hanger or in Cabinet</span>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-1"><input type="radio" name="mountedSecurely" checked={checklist.mountedSecurely === 'pass'} onChange={()=>setChecklist(c=>({...c,mountedSecurely:'pass'}))} /><span className="text-xs text-green-600">Pass</span></label>
+                    <label className="flex items-center gap-1"><input type="radio" name="mountedSecurely" checked={checklist.mountedSecurely === 'fail'} onChange={()=>setChecklist(c=>({...c,mountedSecurely:'fail'}))} /><span className="text-xs text-red-600">Fail</span></label>
+                  </div>
+                </div>
               </div>
             </div>
 
             {/* Administrative */}
             <div className="mb-4">
               <h4 className="font-semibold text-md mb-2 text-gray-700 border-b pb-1">Administrative</h4>
-              <div className="space-y-1">
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.inspectionWithin30Days} onChange={(e)=>setChecklist(c=>({...c,inspectionWithin30Days:e.target.checked}))} /> Inspection date within 30 days of last</label>
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.tagSignedDated} onChange={(e)=>setChecklist(c=>({...c,tagSignedDated:e.target.checked}))} /> Tag signed and dated</label>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Inspection date within 30 days of last</span>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-1"><input type="radio" name="inspectionWithin30Days" checked={checklist.inspectionWithin30Days === 'pass'} onChange={()=>setChecklist(c=>({...c,inspectionWithin30Days:'pass'}))} /><span className="text-xs text-green-600">Pass</span></label>
+                    <label className="flex items-center gap-1"><input type="radio" name="inspectionWithin30Days" checked={checklist.inspectionWithin30Days === 'fail'} onChange={()=>setChecklist(c=>({...c,inspectionWithin30Days:'fail'}))} /><span className="text-xs text-red-600">Fail</span></label>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Tag signed and dated</span>
+                  <div className="flex gap-3">
+                    <label className="flex items-center gap-1"><input type="radio" name="tagSignedDated" checked={checklist.tagSignedDated === 'pass'} onChange={()=>setChecklist(c=>({...c,tagSignedDated:'pass'}))} /><span className="text-xs text-green-600">Pass</span></label>
+                    <label className="flex items-center gap-1"><input type="radio" name="tagSignedDated" checked={checklist.tagSignedDated === 'fail'} onChange={()=>setChecklist(c=>({...c,tagSignedDated:'fail'}))} /><span className="text-xs text-red-600">Fail</span></label>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -192,8 +289,8 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
             <div className="flex flex-wrap gap-2 justify-end">
               <button onClick={() => { onEdit?.(activeItem); }} className="px-4 py-2 rounded bg-gray-200">Edit</button>
               <button onClick={() => { onSaveNotes?.(activeItem, checklistSummary()); }} className="px-4 py-2 rounded bg-slate-200">Save Notes</button>
-              <button onClick={() => { onFail?.(activeItem, checklistSummary()); setActiveItem(null); }} className="px-4 py-2 rounded bg-red-600 text-white">Fail</button>
-              <button onClick={() => { onPass?.(activeItem, checklistSummary()); setActiveItem(null); }} className="px-4 py-2 rounded bg-green-600 text-white">Pass</button>
+              <button onClick={() => saveInspection('fail')} className="px-4 py-2 rounded bg-red-600 text-white">Fail</button>
+              <button onClick={() => saveInspection('pass')} className="px-4 py-2 rounded bg-green-600 text-white">Pass</button>
             </div>
           </div>
         </div>
