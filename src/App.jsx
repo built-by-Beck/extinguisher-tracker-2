@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Routes, Route, useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import Login from './Login';
-import CameraScanner from './CameraScanner';
+import CameraScanner from './components/BarcodeScanner.jsx';
+import SectionGrid from './components/SectionGrid';
+import SectionDetail from './components/SectionDetail';
 
 const SECTIONS = [
   'Main Hospital',
@@ -30,6 +33,7 @@ function App() {
   const [scanInput, setScanInput] = useState('');
   const [showCameraScanner, setShowCameraScanner] = useState(false);
   const [adminMode, setAdminMode] = useState(false);
+  const [sectionFilterCollapsed, setSectionFilterCollapsed] = useState(false);
   const [inspectionLogs, setInspectionLogs] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
   const [editItem, setEditItem] = useState(null);
@@ -50,6 +54,7 @@ function App() {
   const [activeTimer, setActiveTimer] = useState(null);
   const [timerStartTime, setTimerStartTime] = useState(null);
   const [currentElapsed, setCurrentElapsed] = useState(0);
+  const [sectionViewMode, setSectionViewMode] = useState({}); // 'unchecked' or 'checked' per section
   
   const scanInputRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -569,6 +574,35 @@ function App() {
     }
   };
 
+  const getSectionViewMode = (section) => {
+    return sectionViewMode[section] || 'unchecked'; // Default to showing unchecked items
+  };
+
+  const toggleSectionView = (section) => {
+    setSectionViewMode(prev => ({
+      ...prev,
+      [section]: prev[section] === 'checked' ? 'unchecked' : 'checked'
+    }));
+  };
+
+  const countsForSection = (section) => {
+    const list = extinguishers.filter(e => e.section === section);
+    const unchecked = list.filter(e => e.status === 'pending').length;
+    return { checked: list.length - unchecked, unchecked };
+  };
+
+  // helpers for SectionDetail actions
+  const handlePass = (item, notesSummary = '') => handleInspection(item, 'pass', notesSummary);
+  const handleFail = (item, notesSummary = '') => handleInspection(item, 'fail', notesSummary);
+  const handleSaveNotes = async (item, notesSummary) => {
+    try {
+      const docRef = doc(db, 'extinguishers', item.id);
+      await updateDoc(docRef, { notes: notesSummary || '' });
+    } catch (e) {
+      console.error('Error saving notes:', e);
+    }
+  };
+
   const resetMonthlyStatus = async () => {
     console.log('=== MONTHLY RESET DEBUG ===');
     const currentDate = new Date().toISOString();
@@ -724,9 +758,22 @@ function App() {
         if (!item) return false;
 
         const matchesSection = selectedSection === 'All' || item.section === selectedSection;
-        const matchesView = view === 'pending' ? item.status === 'pending' :
-                           view === 'pass' ? item.status === 'pass' :
-                           view === 'fail' ? item.status === 'fail' : true;
+
+        // If a specific section is selected (not "All"), use section view mode
+        let matchesView;
+        if (selectedSection !== 'All') {
+          const currentViewMode = getSectionViewMode(selectedSection);
+          if (currentViewMode === 'unchecked') {
+            matchesView = item.status === 'pending';
+          } else { // checked
+            matchesView = item.status === 'pass' || item.status === 'fail';
+          }
+        } else {
+          // For "All" sections, use the global view filter
+          matchesView = view === 'pending' ? item.status === 'pending' :
+                       view === 'pass' ? item.status === 'pass' :
+                       view === 'fail' ? item.status === 'fail' : true;
+        }
 
         const searchLower = searchTerm.toLowerCase();
         const matchesSearch = searchTerm === '' ||
@@ -780,37 +827,64 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-20">
+    <div className="min-h-screen bg-gradient-to-b from-gray-800 via-gray-900 to-black pb-20">
       <div className="max-w-6xl mx-auto p-4">
-        <div className="bg-blue-600 text-white p-6 rounded-lg shadow-lg mb-6">
-          <div className="flex justify-between items-start">
-            <div>
-              <h1 className="text-3xl font-bold mb-2">Brookwood Hospital</h1>
-              <h2 className="text-xl mb-2">Fire Extinguisher Tracker</h2>
-              <p className="text-sm opacity-90">
-                Logged in as: {user.email}
-              </p>
+        {/* Banner Image */}
+        <div className="mb-2 rounded-lg overflow-hidden shadow-2xl" style={{ height: '270px' }}>
+          <img
+            src="/banner.jpg"
+            alt="Fire Extinguisher Tracker - built by Beck"
+            className="w-full"
+            style={{
+              objectFit: 'cover',
+              objectPosition: 'center 40%',
+              height: '100%'
+            }}
+            onError={(e) => {
+              console.error('Banner image failed to load');
+              e.target.style.display = 'none';
+            }}
+          />
+        </div>
+
+        {/* Credit Text */}
+        <div className="text-center mb-6">
+          <p className="text-red-400 font-semibold text-lg">
+            Built by: David Beck - Life Safety Technician
+          </p>
+        </div>
+
+        {/* Header with gradient and red border */}
+        <div className="bg-gradient-to-r from-gray-700 to-gray-800 text-white p-4 rounded-lg shadow-lg mb-6 border border-red-900">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-4">
+              <div className="text-sm">
+                <span className="text-gray-400">Brookwood Hospital</span>
+                <span className="text-white font-semibold ml-2">Fire Extinguisher Tracker</span>
+              </div>
             </div>
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-400">Logged in as:</span>
+              <span className="text-sm text-white">{user.email}</span>
               <button
                 onClick={() => setAdminMode(!adminMode)}
-                className={`p-2 hover:bg-blue-700 rounded flex items-center gap-2 ${adminMode ? 'bg-blue-700' : ''}`}
+                className={`p-2 hover:bg-gray-600 rounded flex items-center gap-2 ${adminMode ? 'bg-gray-600' : ''}`}
                 title={adminMode ? 'Exit Admin Mode' : 'Admin Mode'}
               >
-                <Settings size={20} />
+                <Settings size={18} />
               </button>
               <button
                 onClick={handleLogout}
-                className="p-2 hover:bg-blue-700 rounded flex items-center gap-2"
+                className="p-2 hover:bg-gray-600 rounded flex items-center gap-2"
                 title="Logout"
               >
-                <LogOut size={20} />
+                <LogOut size={18} />
               </button>
               <button
                 onClick={() => setShowMenu(!showMenu)}
-                className="p-2 hover:bg-blue-700 rounded"
+                className="p-2 hover:bg-gray-600 rounded"
               >
-                <Menu size={24} />
+                <Menu size={20} />
               </button>
             </div>
           </div>
@@ -998,92 +1072,78 @@ function App() {
         </div>
 
         <div className="bg-white p-4 rounded-lg shadow mb-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Filter size={20} className="text-gray-600" />
-            <h3 className="font-semibold text-lg">Section Filter</h3>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            {/* All Sections Button */}
-            <button
-              onClick={() => setSelectedSection('All')}
-              className={`p-3 rounded-lg border-2 transition ${
-                selectedSection === 'All'
-                  ? 'border-green-500 bg-green-50'
-                  : 'border-gray-200 hover:border-green-300'
-              }`}
-            >
-              <div className="font-medium text-sm mb-1">🔍 All Sections</div>
-              <div className="text-xs text-gray-600">
-                <div>Total: {extinguishers.length}</div>
-                <div>Pending: {extinguishers.filter(item => item.status === 'pending').length}</div>
-                <div className="text-green-600 font-semibold mt-1">
-                  Search All
-                </div>
-              </div>
+          <div
+            className="flex items-center justify-between mb-4 cursor-pointer"
+            onClick={() => setSectionFilterCollapsed(!sectionFilterCollapsed)}
+          >
+            <div className="flex items-center gap-2">
+              <Filter size={20} className="text-gray-600" />
+              <h3 className="font-semibold text-lg">Section Filter</h3>
+              {selectedSection !== 'All' && (
+                <span className="text-sm text-gray-600 bg-blue-100 px-2 py-1 rounded">({selectedSection})</span>
+              )}
+            </div>
+            <button className="p-2 hover:bg-gray-100 rounded transition">
+              {sectionFilterCollapsed ? (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              ) : (
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                </svg>
+              )}
             </button>
+          </div>
 
-            {sectionCounts.map(({ section, total, pending, pass, fail }) => (
+          {!sectionFilterCollapsed && (
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+              {/* All Sections Button */}
               <button
-                key={section}
-                onClick={() => setSelectedSection(section)}
+                onClick={() => setSelectedSection('All')}
                 className={`p-3 rounded-lg border-2 transition ${
-                  selectedSection === section
-                    ? 'border-blue-500 bg-blue-50'
-                    : 'border-gray-200 hover:border-blue-300'
+                  selectedSection === 'All'
+                    ? 'border-green-500 bg-green-50'
+                    : 'border-gray-200 hover:border-green-300'
                 }`}
               >
-                <div className="font-medium text-sm mb-1">{section}</div>
+                <div className="font-medium text-sm mb-1">🔍 All Sections</div>
                 <div className="text-xs text-gray-600">
-                  <div>Total: {total}</div>
-                  <div>Pending: {pending}</div>
-                  {getTotalTime(section) > 0 && (
-                    <div className="text-blue-600 font-semibold mt-1">
-                      {formatTime(getTotalTime(section))}
-                    </div>
-                  )}
+                  <div>Total: {extinguishers.length}</div>
+                  <div>Pending: {extinguishers.filter(item => item.status === 'pending').length}</div>
+                  <div className="text-green-600 font-semibold mt-1">
+                    Search All
+                  </div>
                 </div>
               </button>
-            ))}
-          </div>
+
+              {sectionCounts.map(({ section, total, pending, pass, fail }) => (
+                <button
+                  key={section}
+                  onClick={() => setSelectedSection(section)}
+                  className={`p-3 rounded-lg border-2 transition ${
+                    selectedSection === section
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-gray-200 hover:border-blue-300'
+                  }`}
+                >
+                  <div className="font-medium text-sm mb-1">{section}</div>
+                  <div className="text-xs text-gray-600">
+                    <div>Total: {total}</div>
+                    <div>Pending: {pending}</div>
+                    {getTotalTime(section) > 0 && (
+                      <div className="text-blue-600 font-semibold mt-1">
+                        {formatTime(getTotalTime(section))}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="bg-white p-4 rounded-lg shadow mb-6">
-          <div className="flex flex-wrap gap-4 items-center mb-4">
-            <div className="flex gap-2 flex-wrap">
-              <button
-                onClick={() => setView('pending')}
-                className={`px-4 py-2 rounded ${
-                  view === 'pending' ? 'bg-gray-500 text-white' : 'bg-gray-200 hover:bg-gray-300'
-                }`}
-              >
-                Pending
-              </button>
-              <button
-                onClick={() => setView('pass')}
-                className={`px-4 py-2 rounded ${
-                  view === 'pass' ? 'bg-green-500 text-white' : 'bg-gray-200 hover:bg-gray-300'
-                }`}
-              >
-                Passed
-              </button>
-              <button
-                onClick={() => setView('fail')}
-                className={`px-4 py-2 rounded ${
-                  view === 'fail' ? 'bg-red-500 text-white' : 'bg-gray-200 hover:bg-gray-300'
-                }`}
-              >
-                Failed
-              </button>
-              <button
-                onClick={() => setView('all')}
-                className={`px-4 py-2 rounded ${
-                  view === 'all' ? 'bg-blue-500 text-white' : 'bg-gray-200 hover:bg-gray-300'
-                }`}
-              >
-                All
-              </button>
-            </div>
-          </div>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
             <input
@@ -1096,79 +1156,28 @@ function App() {
           </div>
         </div>
 
-        <div className="space-y-3">
-          {filteredItems.length === 0 ? (
-            <div className="bg-white p-8 rounded-lg shadow text-center text-gray-500">
-              {extinguishers.length === 0
-                ? 'No data yet. Import a file or add fire extinguishers manually to get started.'
-                : `No items found.`}
-            </div>
-          ) : (
-            filteredItems.map((item) => (
-              <div
-                key={item.id}
-                onClick={() => setSelectedItem(item)}
-                className="bg-white p-4 rounded-lg shadow hover:shadow-md transition cursor-pointer"
-              >
-                <div className="flex items-start gap-4">
-                  <div className="flex-shrink-0 mt-1">
-                    {item.status === 'pass' && <CheckCircle size={24} className="text-green-500" />}
-                    {item.status === 'fail' && <XCircle size={24} className="text-red-500" />}
-                    {item.status === 'pending' && <Circle size={24} className="text-gray-400" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-start mb-3">
-                      <div>
-                        <div className="text-sm text-gray-500 uppercase font-medium">Asset ID</div>
-                        <div className="font-bold text-2xl">{item.assetId}</div>
-                      </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleEdit(item);
-                        }}
-                        className="p-2 hover:bg-gray-100 rounded"
-                      >
-                        <Edit2 size={20} className="text-gray-600" />
-                      </button>
-                    </div>
-
-                    <div className="mb-3">
-                      <div className="text-sm text-gray-500 font-medium">Building/Section</div>
-                      <div className="font-semibold text-lg text-blue-600">{item.section}</div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3 mb-3">
-                      <div>
-                        <div className="text-sm text-gray-500 font-medium">Serial Number</div>
-                        <div className="font-mono text-base font-medium">{item.serial}</div>
-                      </div>
-                      {item.checkedDate && (
-                        <div>
-                          <div className="text-sm text-gray-500 font-medium">Last Checked</div>
-                          <div className="text-base font-medium">{new Date(item.checkedDate).toLocaleDateString()}</div>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="mb-2">
-                      <div className="text-sm text-gray-500 font-medium">Location</div>
-                      <div className="text-base font-medium text-gray-700">{item.vicinity}</div>
-                      {item.parentLocation && (
-                        <div className="text-sm text-gray-600">{item.parentLocation}</div>
-                      )}
-                    </div>
-                    {item.notes && (
-                      <div className="text-sm text-gray-600 bg-yellow-50 p-2 rounded mt-2">
-                        <strong>Notes:</strong> {item.notes}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+        <Routes>
+          <Route
+            path="/"
+            element={<SectionGrid sections={SECTIONS} extinguishers={extinguishers} />}
+          />
+          <Route
+            path="/section/:name"
+            element={
+              <SectionDetail
+                extinguishers={extinguishers}
+                onSelectItem={setSelectedItem}
+                getViewMode={getSectionViewMode}
+                toggleView={toggleSectionView}
+                countsFor={countsForSection}
+                onPass={handlePass}
+                onFail={handleFail}
+                onEdit={handleEdit}
+                onSaveNotes={handleSaveNotes}
+              />
+            }
+          />
+        </Routes>
       </div>
 
       {showTimeModal && (
@@ -1412,11 +1421,14 @@ function App() {
       />
 
       {selectedItem && !editItem && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-lg p-6 max-w-2xl w-full my-8">
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-lg p-6 max-w-2xl w-full my-8 border-2 border-red-600 shadow-2xl">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-bold">Inspect Fire Extinguisher</h3>
-              <button onClick={() => setSelectedItem(null)}>
+              <h3 className="text-2xl font-bold text-red-400">Inspect Fire Extinguisher</h3>
+              <button
+                onClick={() => setSelectedItem(null)}
+                className="text-gray-400 hover:text-white transition"
+              >
                 <X size={24} />
               </button>
             </div>
@@ -1424,42 +1436,42 @@ function App() {
             <div className="space-y-4 mb-6">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <div className="text-sm text-gray-500">Asset ID</div>
-                  <div className="font-semibold text-xl">{selectedItem.assetId}</div>
+                  <div className="text-sm text-gray-400">Asset ID</div>
+                  <div className="font-semibold text-xl text-white">{selectedItem.assetId}</div>
                 </div>
                 <div>
-                  <div className="text-sm text-gray-500">Serial Number</div>
-                  <div className="font-mono">{selectedItem.serial}</div>
+                  <div className="text-sm text-gray-400">Serial Number</div>
+                  <div className="font-mono text-white">{selectedItem.serial}</div>
                 </div>
               </div>
-              
+
               <div>
-                <div className="text-sm text-gray-500">Location</div>
-                <div className="font-medium">{selectedItem.vicinity}</div>
-                <div className="text-sm text-gray-600">{selectedItem.parentLocation}</div>
+                <div className="text-sm text-gray-400">Location</div>
+                <div className="font-medium text-white">{selectedItem.vicinity}</div>
+                <div className="text-sm text-gray-300">{selectedItem.parentLocation}</div>
               </div>
 
               <div>
-                <div className="text-sm text-gray-500">Section</div>
-                <div className="font-medium">{selectedItem.section}</div>
+                <div className="text-sm text-gray-400">Section</div>
+                <div className="font-medium text-white">{selectedItem.section}</div>
               </div>
 
               <div>
-                <div className="text-sm text-gray-500 mb-2">Current Status</div>
+                <div className="text-sm text-gray-400 mb-2">Current Status</div>
                 <div className="flex items-center gap-2">
                   {selectedItem.status === 'pass' && (
-                    <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full">PASSED</span>
+                    <span className="px-3 py-1 bg-green-600 text-white rounded-full font-semibold">PASSED</span>
                   )}
                   {selectedItem.status === 'fail' && (
-                    <span className="px-3 py-1 bg-red-100 text-red-700 rounded-full">FAILED</span>
+                    <span className="px-3 py-1 bg-red-600 text-white rounded-full font-semibold">FAILED</span>
                   )}
                   {selectedItem.status === 'pending' && (
-                    <span className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full">PENDING</span>
+                    <span className="px-3 py-1 bg-gray-600 text-white rounded-full font-semibold">PENDING</span>
                   )}
                   {selectedItem.status !== 'pending' && (
                     <button
                       onClick={() => resetStatus(selectedItem)}
-                      className="text-sm text-blue-600 hover:underline"
+                      className="text-sm text-red-400 hover:text-red-300 underline"
                     >
                       Reset Status
                     </button>
@@ -1469,19 +1481,19 @@ function App() {
 
               {selectedItem.inspectionHistory && selectedItem.inspectionHistory.length > 0 && (
                 <div>
-                  <div className="text-sm text-gray-500 mb-2">Inspection History</div>
+                  <div className="text-sm text-gray-400 mb-2">Inspection History</div>
                   <div className="space-y-2 max-h-40 overflow-y-auto">
                     {selectedItem.inspectionHistory.map((hist, idx) => (
-                      <div key={idx} className="text-sm bg-gray-50 p-2 rounded">
+                      <div key={idx} className="text-sm bg-gray-700 p-2 rounded border border-gray-600">
                         <div className="flex justify-between">
-                          <span className={hist.status === 'pass' ? 'text-green-600' : 'text-red-600'}>
+                          <span className={hist.status === 'pass' ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>
                             {hist.status.toUpperCase()}
                           </span>
-                          <span className="text-gray-500">
+                          <span className="text-gray-300">
                             {new Date(hist.date).toLocaleString()}
                           </span>
                         </div>
-                        {hist.notes && <div className="text-gray-600 mt-1">{hist.notes}</div>}
+                        {hist.notes && <div className="text-gray-300 mt-1">{hist.notes}</div>}
                       </div>
                     ))}
                   </div>
@@ -1492,13 +1504,13 @@ function App() {
             {selectedItem.status === 'pending' && (
               <div className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
                     Inspection Notes (Optional)
                   </label>
                   <textarea
                     id="notes"
                     rows="3"
-                    className="w-full p-2 border border-gray-300 rounded-lg"
+                    className="w-full p-3 border border-gray-600 rounded-lg bg-gray-700 text-white placeholder-gray-400 focus:ring-2 focus:ring-red-500 focus:border-red-500"
                     placeholder="Add any notes about this inspection..."
                   />
                 </div>
@@ -1509,7 +1521,7 @@ function App() {
                       const notes = document.getElementById('notes').value;
                       handleInspection(selectedItem, 'pass', notes);
                     }}
-                    className="bg-green-500 text-white p-4 rounded-lg hover:bg-green-600 flex items-center justify-center gap-2"
+                    className="bg-green-600 text-white p-4 rounded-lg hover:bg-green-700 flex items-center justify-center gap-2 font-bold text-lg shadow-lg transition"
                   >
                     <CheckCircle size={24} />
                     PASS
@@ -1519,7 +1531,7 @@ function App() {
                       const notes = document.getElementById('notes').value;
                       handleInspection(selectedItem, 'fail', notes);
                     }}
-                    className="bg-red-500 text-white p-4 rounded-lg hover:bg-red-600 flex items-center justify-center gap-2"
+                    className="bg-red-600 text-white p-4 rounded-lg hover:bg-red-700 flex items-center justify-center gap-2 font-bold text-lg shadow-lg transition"
                   >
                     <XCircle size={24} />
                     FAIL
@@ -1527,6 +1539,16 @@ function App() {
                 </div>
               </div>
             )}
+
+            <div className="mt-4 pt-4 border-t border-gray-700">
+              <button
+                onClick={() => handleEdit(selectedItem)}
+                className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 font-semibold transition shadow-lg"
+              >
+                <Edit2 size={20} />
+                Edit Extinguisher Details
+              </button>
+            </div>
           </div>
         </div>
       )}

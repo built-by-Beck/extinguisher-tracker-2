@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore } from 'firebase/firestore';
+import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { getAnalytics } from 'firebase/analytics';
 
@@ -18,6 +18,18 @@ const app = initializeApp(firebaseConfig);
 
 // Initialize Firebase services
 export const db = getFirestore(app);
+
+// Enable offline persistence (queues writes, serves cached reads)
+try {
+  enableIndexedDbPersistence(db).catch((err) => {
+    // Ignore known cases (multiple tabs) but log others for visibility
+    if (err.code !== 'failed-precondition' && err.code !== 'unimplemented') {
+      console.warn('Firestore persistence error:', err);
+    }
+  });
+} catch (e) {
+  console.warn('Failed to enable Firestore persistence:', e);
+}
 export const auth = getAuth(app);
 export const analytics = getAnalytics(app);
 
