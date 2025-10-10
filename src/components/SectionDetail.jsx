@@ -9,7 +9,21 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
   const [scanValue, setScanValue] = useState('');
   const scanRef = useRef(null);
   const [activeItem, setActiveItem] = useState(null);
-  const [checklist, setChecklist] = useState({ pin: true, seal: true, gauge: true, visible: true, clear: true, condition: true });
+  const [checklist, setChecklist] = useState({
+    pinPresent: true,
+    tamperSealIntact: true,
+    gaugeCorrectPressure: true,
+    weightCorrect: true,
+    noDamage: true,
+    inDesignatedLocation: true,
+    clearlyVisible: true,
+    nearestUnder75ft: true,
+    topUnder5ft: true,
+    bottomOver4in: true,
+    mountedSecurely: true,
+    inspectionWithin30Days: true,
+    tagSignedDated: true
+  });
   const [notes, setNotes] = useState('');
 
   useEffect(() => {
@@ -45,7 +59,21 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
     const match = findByScan(scanValue);
     if (match) {
       setActiveItem(match);
-      setChecklist({ pin: true, seal: true, gauge: true, visible: true, clear: true, condition: true });
+      setChecklist({
+        pinPresent: true,
+        tamperSealIntact: true,
+        gaugeCorrectPressure: true,
+        weightCorrect: true,
+        noDamage: true,
+        inDesignatedLocation: true,
+        clearlyVisible: true,
+        nearestUnder75ft: true,
+        topUnder5ft: true,
+        bottomOver4in: true,
+        mountedSecurely: true,
+        inspectionWithin30Days: true,
+        tagSignedDated: true
+      });
       setNotes('');
     }
     setScanValue('');
@@ -114,16 +142,52 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
             </div>
             <div className="text-sm text-gray-600 mb-3">{activeItem.vicinity} • {activeItem.parentLocation}</div>
 
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
-              <label className="flex items-center gap-2 bg-gray-50 rounded p-2"><input type="checkbox" checked={checklist.pin} onChange={(e)=>setChecklist(c=>({...c,pin:e.target.checked}))} /> Pin present</label>
-              <label className="flex items-center gap-2 bg-gray-50 rounded p-2"><input type="checkbox" checked={checklist.seal} onChange={(e)=>setChecklist(c=>({...c,seal:e.target.checked}))} /> Tamper seal intact</label>
-              <label className="flex items-center gap-2 bg-gray-50 rounded p-2"><input type="checkbox" checked={checklist.gauge} onChange={(e)=>setChecklist(c=>({...c,gauge:e.target.checked}))} /> Gauge in green</label>
-              <label className="flex items-center gap-2 bg-gray-50 rounded p-2"><input type="checkbox" checked={checklist.visible} onChange={(e)=>setChecklist(c=>({...c,visible:e.target.checked}))} /> Visible</label>
-              <label className="flex items-center gap-2 bg-gray-50 rounded p-2"><input type="checkbox" checked={checklist.clear} onChange={(e)=>setChecklist(c=>({...c,clear:e.target.checked}))} /> No obstructions</label>
-              <label className="flex items-center gap-2 bg-gray-50 rounded p-2"><input type="checkbox" checked={checklist.condition} onChange={(e)=>setChecklist(c=>({...c,condition:e.target.checked}))} /> Overall condition OK</label>
+            {/* Basic Monthly Check */}
+            <div className="mb-4">
+              <h4 className="font-semibold text-md mb-2 text-gray-700 border-b pb-1">Basic Monthly Check</h4>
+              <div className="space-y-1">
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.pinPresent} onChange={(e)=>setChecklist(c=>({...c,pinPresent:e.target.checked}))} /> Pin Present</label>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.tamperSealIntact} onChange={(e)=>setChecklist(c=>({...c,tamperSealIntact:e.target.checked}))} /> Tamper Seal Intact</label>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.gaugeCorrectPressure} onChange={(e)=>setChecklist(c=>({...c,gaugeCorrectPressure:e.target.checked}))} /> Gauge Shows Correct Pressure</label>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.weightCorrect} onChange={(e)=>setChecklist(c=>({...c,weightCorrect:e.target.checked}))} /> Weight feels correct</label>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.noDamage} onChange={(e)=>setChecklist(c=>({...c,noDamage:e.target.checked}))} /> No Visible Damage, Corrosion, or Leakage</label>
+              </div>
             </div>
 
-            <textarea className="w-full border rounded p-2 mb-3" rows={3} value={notes} onChange={(e)=>setNotes(e.target.value)} placeholder="Notes (optional)" />
+            {/* Location & Accessibility */}
+            <div className="mb-4">
+              <h4 className="font-semibold text-md mb-2 text-gray-700 border-b pb-1">Location & Accessibility</h4>
+              <div className="space-y-1">
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.inDesignatedLocation} onChange={(e)=>setChecklist(c=>({...c,inDesignatedLocation:e.target.checked}))} /> Extinguisher in designated location</label>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.clearlyVisible} onChange={(e)=>setChecklist(c=>({...c,clearlyVisible:e.target.checked}))} /> Clearly Visible with no Obstructions</label>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.nearestUnder75ft} onChange={(e)=>setChecklist(c=>({...c,nearestUnder75ft:e.target.checked}))} /> Nearest extinguisher not over 75ft away</label>
+              </div>
+            </div>
+
+            {/* Mounting & Height */}
+            <div className="mb-4">
+              <h4 className="font-semibold text-md mb-2 text-gray-700 border-b pb-1">Mounting & Height</h4>
+              <div className="space-y-1">
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.topUnder5ft} onChange={(e)=>setChecklist(c=>({...c,topUnder5ft:e.target.checked}))} /> Top &lt;= 5ft (if &lt;= 40lb)</label>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.bottomOver4in} onChange={(e)=>setChecklist(c=>({...c,bottomOver4in:e.target.checked}))} /> Bottom &gt;= 4 inches from floor</label>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.mountedSecurely} onChange={(e)=>setChecklist(c=>({...c,mountedSecurely:e.target.checked}))} /> Mounted securely on hanger or in Cabinet</label>
+              </div>
+            </div>
+
+            {/* Administrative */}
+            <div className="mb-4">
+              <h4 className="font-semibold text-md mb-2 text-gray-700 border-b pb-1">Administrative</h4>
+              <div className="space-y-1">
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.inspectionWithin30Days} onChange={(e)=>setChecklist(c=>({...c,inspectionWithin30Days:e.target.checked}))} /> Inspection date within 30 days of last</label>
+                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={checklist.tagSignedDated} onChange={(e)=>setChecklist(c=>({...c,tagSignedDated:e.target.checked}))} /> Tag signed and dated</label>
+              </div>
+            </div>
+
+            {/* Notes / Observations */}
+            <div className="mb-4">
+              <h4 className="font-semibold text-md mb-2 text-gray-700 border-b pb-1">Notes / Observations</h4>
+              <textarea className="w-full border rounded p-3 text-sm" rows={6} value={notes} onChange={(e)=>setNotes(e.target.value)} placeholder="Enter any additional notes or observations about the extinguisher or its location..." />
+            </div>
 
             <div className="flex flex-wrap gap-2 justify-end">
               <button onClick={() => { onEdit?.(activeItem); }} className="px-4 py-2 rounded bg-gray-200">Edit</button>
