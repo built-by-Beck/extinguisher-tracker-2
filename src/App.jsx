@@ -4,7 +4,9 @@ import * as XLSX from 'xlsx';
 import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs } from 'firebase/firestore';
-import { auth, db } from './firebase';
+import { auth, db, storage } from './firebase';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { deleteObject } from 'firebase/storage';
 import Login from './Login';
 import CameraScanner from './components/BarcodeScanner.jsx';
 import SectionGrid from './components/SectionGrid';
@@ -49,6 +51,9 @@ function App() {
     parentLocation: '',
     section: 'Main Hospital'
   });
+  const [newItemPhoto, setNewItemPhoto] = useState(null);
+  const [newItemGps, setNewItemGps] = useState(null);
+  const [newItemGpsLoading, setNewItemGpsLoading] = useState(false);
   
   const [sectionTimes, setSectionTimes] = useState({});
   const [activeTimer, setActiveTimer] = useState(null);
@@ -309,6 +314,15 @@ function App() {
     }
 
     try {
+      // optional photo upload
+      let assetPhotoUrl = null;
+      if (newItemPhoto instanceof File) {
+        const path = `assets/${newItem.assetId.trim()}/${Date.now()}_${newItemPhoto.name}`;
+        const sref = storageRef(storage, path);
+        const snap = await uploadBytes(sref, newItemPhoto, { contentType: newItemPhoto.type });
+        assetPhotoUrl = await getDownloadURL(snap.ref);
+      }
+
       const item = {
         assetId: newItem.assetId.trim(),
         vicinity: newItem.vicinity.trim(),
@@ -320,7 +334,9 @@ function App() {
         notes: '',
         inspectionHistory: [],
         userId: user.uid,
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        photoUrl: assetPhotoUrl,
+        location: newItemGps || null
       };
 
       await addDoc(collection(db, 'extinguishers'), item);
@@ -332,6 +348,8 @@ function App() {
         parentLocation: '',
         section: 'Main Hospital'
       });
+      setNewItemPhoto(null);
+      setNewItemGps(null);
       alert('New fire extinguisher added successfully!');
     } catch (error) {
       console.error('Error adding extinguisher:', error);
@@ -341,12 +359,23 @@ function App() {
 
   const handleInspection = async (item, status, notes = '', inspectionData = null) => {
     try {
+      let photoUrl = null;
+      if (inspectionData?.photo instanceof File) {
+        const file = inspectionData.photo;
+        const path = `inspections/${item.assetId || item.id}/${Date.now()}_${file.name}`;
+        const sref = storageRef(storage, path);
+        const snapshot = await uploadBytes(sref, file, { contentType: file.type });
+        photoUrl = await getDownloadURL(snapshot.ref);
+      }
+      const gps = inspectionData?.gps || null;
       const inspection = {
         date: new Date().toISOString(),
         status,
         notes,
         inspector: user.email || 'Current User',
-        checklistData: inspectionData?.checklistData || null
+        checklistData: inspectionData?.checklistData || null,
+        photoUrl: photoUrl || null,
+        gps: gps
       };
 
       const docRef = doc(db, 'extinguishers', item.id);
@@ -355,6 +384,8 @@ function App() {
         checkedDate: new Date().toISOString(),
         notes,
         checklistData: inspectionData?.checklistData || null,
+        lastInspectionPhotoUrl: photoUrl || null,
+        lastInspectionGps: gps || null,
         inspectionHistory: [...(item.inspectionHistory || []), inspection]
       });
 
@@ -1391,6 +1422,46 @@ function App() {
                 </select>
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Photo (optional)</label>
+                <input type="file" accept="image/*" capture="environment" onChange={(e)=> setNewItemPhoto(e.target.files?.[0] || null)} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">GPS Location (optional)</label>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    className="px-3 py-2 border rounded bg-slate-50"
+                    onClick={() => {
+                      if (!('geolocation' in navigator)) { alert('Geolocation not supported on this device/browser.'); return; }
+                      setNewItemGpsLoading(true);
+                      navigator.geolocation.getCurrentPosition(
+                        (pos) => {
+                          const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+                          setNewItemGps({ lat, lng, accuracy, capturedAt: new Date().toISOString() });
+                          setNewItemGpsLoading(false);
+                        },
+                        (err) => {
+                          console.warn('GPS error:', err);
+                          alert('Unable to get GPS location. Please ensure location services are enabled.');
+                          setNewItemGpsLoading(false);
+                        },
+                        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+                      );
+                    }}
+                  >{newItemGpsLoading ? 'Capturing…' : 'Capture GPS'}</button>
+                  {newItemGps && (
+                    <div className="text-sm text-gray-700 flex items-center gap-2">
+                      <span className="px-2 py-1 rounded bg-slate-100">
+                        {newItemGps.lat.toFixed(6)}, {newItemGps.lng.toFixed(6)} (±{Math.round(newItemGps.accuracy)}m)
+                      </span>
+                      <a className="text-blue-600 underline" href={`https://maps.google.com/?q=${newItemGps.lat},${newItemGps.lng}`} target="_blank" rel="noreferrer">Open in Maps</a>
+                      <button className="text-red-600" onClick={()=>setNewItemGps(null)}>Clear</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div className="flex gap-4 pt-4">
                 <button
                   onClick={handleAddNew}
@@ -1481,6 +1552,72 @@ function App() {
               <div>
                 <div className="text-sm text-gray-400">Section</div>
                 <div className="font-medium text-white">{selectedItem.section}</div>
+              </div>
+
+              {/* Location chip with Open in Maps */}
+              {(() => {
+                const gps = selectedItem.lastInspectionGps || selectedItem.location;
+                if (!gps) return null;
+                return (
+                  <div className="flex items-center gap-2">
+                    <div className="text-sm text-gray-400">Location</div>
+                    <div className="text-sm text-white bg-black/40 px-2 py-1 rounded">
+                      {Number(gps.lat).toFixed(6)}, {Number(gps.lng).toFixed(6)}
+                      {gps.accuracy ? (<span className="text-gray-300"> (±{Math.round(gps.accuracy)}m)</span>) : null}
+                      <a
+                        className="ml-2 text-blue-300 underline"
+                        href={`https://maps.google.com/?q=${gps.lat},${gps.lng}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >Open in Maps</a>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Photos section */}
+              <div>
+                <div className="text-sm text-gray-400 mb-2">Photos</div>
+                <div className="flex flex-wrap gap-3 items-center">
+                  {(selectedItem.photos && selectedItem.photos.length > 0) ? (
+                    selectedItem.photos.map((p, i) => (
+                      <div key={i} className="relative group">
+                        <a href={p.url} target="_blank" rel="noreferrer">
+                          <img src={p.url} alt={`Asset photo ${i+1}`} className="w-20 h-20 object-cover rounded border" />
+                        </a>
+                        <div className="absolute -top-2 -right-2 hidden group-hover:flex gap-1">
+                          {i !== 0 && (
+                            <button className="text-xs bg-yellow-400 text-black px-1 rounded" onClick={(e)=>{ e.preventDefault(); setMainAssetPhoto(selectedItem, i); }}>Main</button>
+                          )}
+                          <button className="text-xs bg-red-600 text-white px-1 rounded" onClick={(e)=>{ e.preventDefault(); removeAssetPhoto(selectedItem, i); }}>X</button>
+                        </div>
+                        {i === 0 && (
+                          <div className="absolute bottom-0 left-0 bg-black/60 text-white text-[10px] px-1 rounded-tr">Main</div>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-sm text-gray-300">No photos</div>
+                  )}
+                  <label className={`px-3 py-2 rounded bg-gray-700 text-white cursor-pointer ${selectedItem.photos && selectedItem.photos.length >= 5 ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                    Add Photo
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      className="hidden"
+                      disabled={!!(selectedItem.photos && selectedItem.photos.length >= 5)}
+                      onChange={async (e)=>{
+                        const f = e.target.files?.[0];
+                        e.target.value = null;
+                        if (f) { await addAssetPhoto(selectedItem, f); }
+                      }}
+                    />
+                  </label>
+                  {selectedItem.photos && selectedItem.photos.length >= 5 && (
+                    <span className="text-xs text-gray-400">Limit reached (5 photos)</span>
+                  )}
+                </div>
               </div>
 
               <div>
@@ -1644,6 +1781,85 @@ function App() {
                 </select>
               </div>
 
+              {/* GPS for edit */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">GPS Location</label>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    className="px-3 py-2 border rounded bg-slate-50"
+                    onClick={() => {
+                      if (!('geolocation' in navigator)) { alert('Geolocation not supported on this device/browser.'); return; }
+                      navigator.geolocation.getCurrentPosition(
+                        (pos) => {
+                          const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+                          setEditItem({ ...editItem, location: { lat, lng, accuracy, capturedAt: new Date().toISOString() } });
+                        },
+                        (err) => {
+                          console.warn('GPS error:', err);
+                          alert('Unable to get GPS location. Please ensure location services are enabled.');
+                        },
+                        { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+                      );
+                    }}
+                  >Capture GPS</button>
+                  {editItem.location && (
+                    <div className="text-sm text-gray-700 flex items-center gap-2">
+                      <span className="px-2 py-1 rounded bg-slate-100">
+                        {Number(editItem.location.lat).toFixed(6)}, {Number(editItem.location.lng).toFixed(6)} (±{Math.round(editItem.location.accuracy || 0)}m)
+                      </span>
+                      <a className="text-blue-600 underline" href={`https://maps.google.com/?q=${editItem.location.lat},${editItem.location.lng}`} target="_blank" rel="noreferrer">Open in Maps</a>
+                      <button className="text-red-600" onClick={()=> setEditItem({ ...editItem, location: null })}>Clear</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Photos manage in edit */}
+              <div>
+                <div className="block text-sm font-medium text-gray-700 mb-1">Photos</div>
+                <div className="flex flex-wrap gap-3 items-center">
+                  {(editItem.photos && editItem.photos.length > 0) ? (
+                    editItem.photos.map((p, i) => (
+                      <div key={i} className="relative group">
+                        <a href={p.url} target="_blank" rel="noreferrer">
+                          <img src={p.url} alt={`Asset photo ${i+1}`} className="w-20 h-20 object-cover rounded border" />
+                        </a>
+                        <div className="absolute -top-2 -right-2 hidden group-hover:flex gap-1">
+                          {i !== 0 && (
+                            <button className="text-xs bg-yellow-400 text-black px-1 rounded" onClick={(e)=>{ e.preventDefault(); setMainAssetPhoto(editItem, i); }}>Main</button>
+                          )}
+                          <button className="text-xs bg-red-600 text-white px-1 rounded" onClick={(e)=>{ e.preventDefault(); removeAssetPhoto(editItem, i); }}>X</button>
+                        </div>
+                        {i === 0 && (
+                          <div className="absolute bottom-0 left-0 bg-black/60 text-white text-[10px] px-1 rounded-tr">Main</div>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-sm text-gray-500">No photos</div>
+                  )}
+                  <label className={`px-3 py-2 rounded bg-gray-100 text-gray-800 cursor-pointer ${editItem.photos && editItem.photos.length >= 5 ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                    Add Photo
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      className="hidden"
+                      disabled={!!(editItem.photos && editItem.photos.length >= 5)}
+                      onChange={async (e)=>{
+                        const f = e.target.files?.[0];
+                        e.target.value = null;
+                        if (f) { await addAssetPhoto(editItem, f); setEditItem(prev => ({ ...prev, photos: (prev.photos || []).concat([]) })); }
+                      }}
+                    />
+                  </label>
+                  {editItem.photos && editItem.photos.length >= 5 && (
+                    <span className="text-xs text-gray-500">Limit reached (5 photos)</span>
+                  )}
+                </div>
+              </div>
+
               <div className="flex gap-4 pt-4">
                 <button
                   onClick={saveEdit}
@@ -1674,3 +1890,38 @@ function App() {
 }
 
 export default App;
+  // Photo helpers for assets (max 5)
+  const addAssetPhoto = async (asset, file) => {
+    if (!asset || !file) return;
+    const photos = asset.photos || [];
+    if (photos.length >= 5) { alert('Photo limit reached (5 per asset).'); return; }
+    const path = `assets/${asset.assetId || asset.id}/${Date.now()}_${file.name}`;
+    const sref = storageRef(storage, path);
+    const snap = await uploadBytes(sref, file, { contentType: file.type });
+    const url = await getDownloadURL(snap.ref);
+    const docRef = doc(db, 'extinguishers', asset.id);
+    const next = [...photos, { url, uploadedAt: new Date().toISOString(), path }];
+    await updateDoc(docRef, { photos: next });
+    setSelectedItem({ ...asset, photos: next });
+  };
+
+  const setMainAssetPhoto = async (asset, index) => {
+    const photos = asset.photos || [];
+    if (index <= 0 || index >= photos.length) return;
+    const reordered = [photos[index], ...photos.slice(0, index), ...photos.slice(index + 1)];
+    const docRef = doc(db, 'extinguishers', asset.id);
+    await updateDoc(docRef, { photos: reordered });
+    setSelectedItem({ ...asset, photos: reordered });
+  };
+
+  const removeAssetPhoto = async (asset, index) => {
+    const photos = asset.photos || [];
+    if (index < 0 || index >= photos.length) return;
+    const removing = photos[index];
+    const docRef = doc(db, 'extinguishers', asset.id);
+    const next = photos.filter((_, i) => i !== index);
+    await updateDoc(docRef, { photos: next });
+    // hard delete from storage (best-effort)
+    try { if (removing.path) await deleteObject(storageRef(storage, removing.path)); } catch (e) { console.warn('Failed to delete storage object', e); }
+    setSelectedItem({ ...asset, photos: next });
+  };

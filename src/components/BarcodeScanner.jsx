@@ -37,6 +37,26 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
     setDetectedCodes([]);
   }, []);
 
+  // Helper: get a working media stream with fallbacks
+  const getWorkingStream = async () => {
+    const tryConstraints = [
+      { video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
+      { video: { facingMode: { ideal: 'user' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false },
+      { video: true, audio: false }
+    ];
+    let lastErr = null;
+    for (const constraints of tryConstraints) {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia(constraints);
+        return s;
+      } catch (e) {
+        lastErr = e;
+        console.warn('getUserMedia failed for constraints', constraints, e);
+      }
+    }
+    throw lastErr || new Error('No camera stream available');
+  };
+
   // Initialize camera and barcode detector
   const initializeScanner = useCallback(async () => {
     setError('');
@@ -60,25 +80,49 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
         ]
       });
 
-      // Request camera with back camera preference
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        },
-        audio: false
-      });
-
+      // Request camera with fallbacks
+      const stream = await getWorkingStream();
+      
       setHasPermission(true);
       streamRef.current = stream;
 
       if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-        setIsScanning(true);
+        const video = videoRef.current;
+        const startVideo = async () => {
+          video.srcObject = streamRef.current;
+          await new Promise((resolve) => {
+            const onLoaded = () => { video.removeEventListener('loadedmetadata', onLoaded); resolve(); };
+            video.addEventListener('loadedmetadata', onLoaded);
+          });
+          try {
+            await video.play();
+          } catch (e) {
+            console.warn('video.play() rejected on init:', e);
+          }
+        };
 
-        // Start continuous scanning
+        // First attempt
+        await startVideo();
+
+        // Validate frames; if black, auto re-init once (mimics successful manual switch)
+        const track = streamRef.current?.getVideoTracks?.()[0];
+        const ready = () => video.videoWidth > 0 && video.videoHeight > 0 && track && track.readyState === 'live';
+        if (!ready()) {
+          await new Promise(r => setTimeout(r, 400));
+        }
+        if (!ready()) {
+          console.warn('No frames after first init; auto re-initializing camera');
+          stopScanner();
+          const retry = await getWorkingStream();
+          streamRef.current = retry;
+          await startVideo();
+          await new Promise(r => setTimeout(r, 200));
+        }
+
+        if (video.videoWidth === 0 || video.videoHeight === 0) {
+          console.warn('Video still has zero dimensions; delaying scan start');
+        }
+        setIsScanning(true);
         startContinuousScanning();
       }
     } catch (err) {
@@ -108,6 +152,7 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
 
       try {
         // Detect barcodes in the current video frame
+        if (videoRef.current.readyState < 2) return; // HAVE_CURRENT_DATA
         const barcodes = await detectorRef.current.detect(videoRef.current);
 
         if (barcodes && barcodes.length > 0) {
@@ -186,34 +231,41 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
 
   // Switch between front/back camera
   const switchCamera = async () => {
+    // Fully stop existing stream/tracks first
     stopScanner();
-
     try {
+      // Attempt to get a stream with the opposite facing mode first
       const currentFacingMode = streamRef.current?.getVideoTracks()[0]?.getSettings()?.facingMode;
-      const newFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: newFacingMode },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        },
-        audio: false
-      });
-
+      const desiredMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+      let stream = null;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: desiredMode }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          audio: false
+        });
+      } catch (e) {
+        console.warn('Switch with desired mode failed, using generic fallback', e);
+        stream = await getWorkingStream();
+      }
       streamRef.current = stream;
-
       if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+        const video = videoRef.current;
+        video.srcObject = stream;
+        await new Promise((resolve) => {
+          const onLoaded = () => { video.removeEventListener('loadedmetadata', onLoaded); resolve(); };
+          video.addEventListener('loadedmetadata', onLoaded);
+        });
+        await video.play();
+        if (video.videoWidth === 0 || video.videoHeight === 0) {
+          await new Promise(r => setTimeout(r, 150));
+        }
         setIsScanning(true);
         startContinuousScanning();
       }
     } catch (err) {
       console.error('Camera switch error:', err);
       setError('Failed to switch camera');
-      // Fallback to re-initialization
-      initializeScanner();
+      await initializeScanner();
     }
   };
 
