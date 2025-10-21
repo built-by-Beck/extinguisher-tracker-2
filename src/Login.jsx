@@ -36,7 +36,7 @@ function Login() {
             <div className="mx-auto w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mb-4">
               <Lock size={32} className="text-white" />
             </div>
-            <h1 className="text-2xl font-bold text-gray-900">Brookwood Hospital</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Fire Safety Management</h1>
             <h2 className="text-lg text-gray-600">Fire Extinguisher Tracker</h2>
           </div>
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
-import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw } from 'lucide-react';
+import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs } from 'firebase/firestore';
 import { auth, db, storage } from './firebase';
@@ -60,7 +60,13 @@ function App() {
   const [timerStartTime, setTimerStartTime] = useState(null);
   const [currentElapsed, setCurrentElapsed] = useState(0);
   const [sectionViewMode, setSectionViewMode] = useState({}); // 'unchecked' or 'checked' per section
-  
+
+  // Section notes state
+  const [sectionNotes, setSectionNotes] = useState({});
+  const [showSectionNotesModal, setShowSectionNotesModal] = useState(false);
+  const [currentSectionNote, setCurrentSectionNote] = useState('');
+  const [noteSelectedSection, setNoteSelectedSection] = useState('Main Hospital');
+
   const scanInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const timerIntervalRef = useRef(null);
@@ -102,8 +108,28 @@ function App() {
       setSectionTimes(JSON.parse(savedTimes));
     }
 
+    // Load section notes from Firestore
+    const sectionNotesQuery = query(
+      collection(db, 'sectionNotes'),
+      where('userId', '==', user.uid)
+    );
+
+    const unsubscribeSectionNotes = onSnapshot(sectionNotesQuery, (snapshot) => {
+      const notesData = {};
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        notesData[data.section] = {
+          id: doc.id,
+          notes: data.notes || '',
+          lastUpdated: data.lastUpdated
+        };
+      });
+      setSectionNotes(notesData);
+    });
+
     return () => {
       unsubscribeExtinguishers();
+      unsubscribeSectionNotes();
     };
   }, [user]);
 
@@ -594,7 +620,8 @@ function App() {
       'Total Milliseconds': sectionTimes[section] || 0,
       'Total Minutes': Math.round((sectionTimes[section] || 0) / 60000),
       'Items Checked': extinguishers.filter(e => e.section === section && e.status !== 'pending').length,
-      'Items Pending': extinguishers.filter(e => e.section === section && e.status === 'pending').length
+      'Items Pending': extinguishers.filter(e => e.section === section && e.status === 'pending').length,
+      'Section Notes': sectionNotes[section]?.notes || ''
     }));
 
     const ws = XLSX.utils.json_to_sheet(timeData);
@@ -629,6 +656,50 @@ function App() {
       await signOut(auth);
     } catch (error) {
       console.error('Error signing out:', error);
+    }
+  };
+
+  // Section notes functions
+  const openSectionNotes = () => {
+    setNoteSelectedSection(selectedSection); // Start with current section
+    const currentNote = sectionNotes[selectedSection]?.notes || '';
+    setCurrentSectionNote(currentNote);
+    setShowSectionNotesModal(true);
+  };
+
+  const handleNoteSectionChange = (section) => {
+    setNoteSelectedSection(section);
+    const currentNote = sectionNotes[section]?.notes || '';
+    setCurrentSectionNote(currentNote);
+  };
+
+  const saveSectionNotes = async () => {
+    try {
+      const existingNote = sectionNotes[noteSelectedSection];
+
+      if (existingNote && existingNote.id) {
+        // Update existing note
+        const docRef = doc(db, 'sectionNotes', existingNote.id);
+        await updateDoc(docRef, {
+          notes: currentSectionNote,
+          lastUpdated: new Date().toISOString()
+        });
+      } else {
+        // Create new note
+        await addDoc(collection(db, 'sectionNotes'), {
+          userId: user.uid,
+          section: noteSelectedSection,
+          notes: currentSectionNote,
+          lastUpdated: new Date().toISOString(),
+          createdAt: new Date().toISOString()
+        });
+      }
+
+      setShowSectionNotesModal(false);
+      alert(`Notes for ${noteSelectedSection} saved successfully!`);
+    } catch (error) {
+      console.error('Error saving section notes:', error);
+      alert('Error saving section notes. Please try again.');
     }
   };
 
@@ -953,7 +1024,7 @@ function App() {
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-4">
               <div className="text-sm">
-                <span className="text-gray-400">Brookwood Hospital</span>
+                <span className="text-gray-400">Fire Safety Management</span>
                 <span className="text-white font-semibold ml-2">Fire Extinguisher Tracker</span>
               </div>
             </div>
@@ -985,61 +1056,127 @@ function App() {
         </div>
 
         {selectedSection !== 'All' && (
-          <div className="bg-white p-4 rounded-lg shadow-lg mb-6">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Clock size={20} className="text-gray-600" />
-                <h3 className="font-semibold text-lg">Time Tracking - {selectedSection}</h3>
+          <>
+            <div className="bg-white p-4 rounded-lg shadow-lg mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Clock size={20} className="text-gray-600" />
+                  <h3 className="font-semibold text-lg">Time Tracking - {selectedSection}</h3>
+                </div>
+                <button
+                  onClick={() => setShowTimeModal(true)}
+                  className="text-sm text-blue-600 hover:underline"
+                >
+                  View All Times
+                </button>
               </div>
-              <button
-                onClick={() => setShowTimeModal(true)}
-                className="text-sm text-blue-600 hover:underline"
-              >
-                View All Times
-              </button>
+
+              <div className="flex items-center gap-4">
+                <div className="flex-1">
+                  <div className="text-3xl font-bold text-blue-600">
+                    {formatTime(getTotalTime(selectedSection))}
+                  </div>
+                  <div className="text-sm text-gray-600">
+                    {Math.round(getTotalTime(selectedSection) / 60000)} minutes
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  {activeTimer === selectedSection ? (
+                    <button
+                      onClick={pauseTimer}
+                      className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600"
+                    >
+                      <Pause size={20} />
+                      Pause
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => startTimer(selectedSection)}
+                      className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+                    >
+                      <Play size={20} />
+                      Start Timer
+                    </button>
+                  )}
+
+                  {activeTimer && (
+                    <button
+                      onClick={stopTimer}
+                      className="flex items-center gap-2 px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+                    >
+                      <StopCircle size={20} />
+                      Stop
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
 
-            <div className="flex items-center gap-4">
-              <div className="flex-1">
-                <div className="text-3xl font-bold text-blue-600">
-                  {formatTime(getTotalTime(selectedSection))}
-                </div>
-                <div className="text-sm text-gray-600">
-                  {Math.round(getTotalTime(selectedSection) / 60000)} minutes
+            {/* Section Notes Card */}
+            <div className="bg-white p-4 rounded-lg shadow-lg mb-6">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <FileText size={20} className="text-gray-600" />
+                  <h3 className="font-semibold text-lg">Section Notes</h3>
+                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                    {Object.values(sectionNotes).filter(note => note.notes).length} sections with notes
+                  </span>
                 </div>
               </div>
 
-              <div className="flex gap-2">
-                {activeTimer === selectedSection ? (
-                  <button
-                    onClick={pauseTimer}
-                    className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600"
-                  >
-                    <Pause size={20} />
-                    Pause
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => startTimer(selectedSection)}
-                    className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
-                  >
-                    <Play size={20} />
-                    Start Timer
-                  </button>
+              <div className="space-y-3">
+                {/* Current section notes */}
+                <div className="p-3 bg-blue-50 rounded border-2 border-blue-200">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="font-semibold text-sm text-blue-900">{selectedSection} (Current)</div>
+                    {sectionNotes[selectedSection]?.lastUpdated && (
+                      <span className="text-xs text-blue-600">
+                        Updated: {new Date(sectionNotes[selectedSection].lastUpdated).toLocaleString()}
+                      </span>
+                    )}
+                  </div>
+                  {sectionNotes[selectedSection]?.notes ? (
+                    <div className="text-sm text-gray-700 whitespace-pre-wrap line-clamp-3">
+                      {sectionNotes[selectedSection].notes}
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-500 italic">
+                      No notes for this section yet
+                    </div>
+                  )}
+                </div>
+
+                {/* Other sections with notes */}
+                {Object.keys(sectionNotes).filter(section =>
+                  section !== selectedSection && sectionNotes[section]?.notes
+                ).length > 0 && (
+                  <div className="border-t pt-2">
+                    <div className="text-xs font-medium text-gray-600 mb-2">Other sections with notes:</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {Object.keys(sectionNotes)
+                        .filter(section => section !== selectedSection && sectionNotes[section]?.notes)
+                        .map(section => (
+                          <div key={section} className="text-xs bg-gray-50 p-2 rounded border border-gray-200">
+                            <div className="font-medium text-gray-700">{section}</div>
+                            <div className="text-gray-500 truncate">{sectionNotes[section].notes}</div>
+                          </div>
+                        ))
+                      }
+                    </div>
+                  </div>
                 )}
 
-                {activeTimer && (
-                  <button
-                    onClick={stopTimer}
-                    className="flex items-center gap-2 px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
-                  >
-                    <StopCircle size={20} />
-                    Stop
-                  </button>
-                )}
+                <button
+                  onClick={openSectionNotes}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                >
+                  <Edit2 size={20} />
+                  Manage Section Notes
+                </button>
               </div>
             </div>
-          </div>
+          </>
         )}
 
         {showMenu && (
@@ -1283,7 +1420,7 @@ function App() {
                 <X size={24} />
               </button>
             </div>
-            
+
             <div className="space-y-3 mb-4">
               {SECTIONS.map(section => {
                 const time = getTotalTime(section);
@@ -1337,6 +1474,76 @@ function App() {
                 className="px-4 bg-red-500 text-white p-3 rounded-lg hover:bg-red-600"
               >
                 Clear All
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSectionNotesModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-lg p-6 max-w-3xl w-full my-8">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">Section Notes</h3>
+              <button onClick={() => setShowSectionNotesModal(false)}>
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Select Section/Building
+              </label>
+              <select
+                value={noteSelectedSection}
+                onChange={(e) => handleNoteSectionChange(e.target.value)}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-4"
+              >
+                {SECTIONS.map(section => (
+                  <option key={section} value={section}>
+                    {section}
+                    {sectionNotes[section]?.notes && ' ✓'}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium text-gray-700">
+                  Notes for {noteSelectedSection}
+                </label>
+                {sectionNotes[noteSelectedSection]?.lastUpdated && (
+                  <span className="text-xs text-gray-500">
+                    Last updated: {new Date(sectionNotes[noteSelectedSection].lastUpdated).toLocaleString()}
+                  </span>
+                )}
+              </div>
+              <textarea
+                value={currentSectionNote}
+                onChange={(e) => setCurrentSectionNote(e.target.value)}
+                rows={12}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Add general notes about this section while inspecting...&#10;&#10;Examples:&#10;• Blocked hallways&#10;• Missing signage&#10;• Access issues&#10;• Maintenance concerns&#10;• Safety observations&#10;• Equipment found out of place&#10;• Doors propped open"
+              />
+              <div className="text-xs text-gray-500 mt-2">
+                These notes are specific to {noteSelectedSection} and separate from individual fire extinguisher notes.
+              </div>
+            </div>
+
+            <div className="flex gap-4">
+              <button
+                onClick={saveSectionNotes}
+                className="flex-1 bg-blue-500 text-white p-3 rounded-lg hover:bg-blue-600 flex items-center justify-center gap-2"
+              >
+                <Save size={20} />
+                Save Notes for {noteSelectedSection}
+              </button>
+              <button
+                onClick={() => setShowSectionNotesModal(false)}
+                className="px-6 bg-gray-300 text-gray-700 p-3 rounded-lg hover:bg-gray-400"
+              >
+                Cancel
               </button>
             </div>
           </div>
