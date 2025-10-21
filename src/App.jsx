@@ -661,6 +661,42 @@ function App() {
     }
   };
 
+  // Photo helpers for assets (max 5)
+  const addAssetPhoto = async (asset, file) => {
+    if (!asset || !file) return;
+    const photos = asset.photos || [];
+    if (photos.length >= 5) { alert('Photo limit reached (5 per asset).'); return; }
+    const path = `assets/${asset.assetId || asset.id}/${Date.now()}_${file.name}`;
+    const sref = storageRef(storage, path);
+    const snap = await uploadBytes(sref, file, { contentType: file.type });
+    const url = await getDownloadURL(snap.ref);
+    const docRef = doc(db, 'extinguishers', asset.id);
+    const next = [...photos, { url, uploadedAt: new Date().toISOString(), path }];
+    await updateDoc(docRef, { photos: next });
+    setSelectedItem({ ...asset, photos: next });
+  };
+
+  const setMainAssetPhoto = async (asset, index) => {
+    const photos = asset.photos || [];
+    if (index <= 0 || index >= photos.length) return;
+    const reordered = [photos[index], ...photos.slice(0, index), ...photos.slice(index + 1)];
+    const docRef = doc(db, 'extinguishers', asset.id);
+    await updateDoc(docRef, { photos: reordered });
+    setSelectedItem({ ...asset, photos: reordered });
+  };
+
+  const removeAssetPhoto = async (asset, index) => {
+    const photos = asset.photos || [];
+    if (index < 0 || index >= photos.length) return;
+    const removing = photos[index];
+    const docRef = doc(db, 'extinguishers', asset.id);
+    const next = photos.filter((_, i) => i !== index);
+    await updateDoc(docRef, { photos: next });
+    // hard delete from storage (best-effort)
+    try { if (removing.path) await deleteObject(storageRef(storage, removing.path)); } catch (e) { console.warn('Failed to delete storage object', e); }
+    setSelectedItem({ ...asset, photos: next });
+  };
+
   const resetMonthlyStatus = async () => {
     console.log('=== MONTHLY RESET DEBUG ===');
     const currentDate = new Date().toISOString();
@@ -1890,38 +1926,3 @@ function App() {
 }
 
 export default App;
-  // Photo helpers for assets (max 5)
-  const addAssetPhoto = async (asset, file) => {
-    if (!asset || !file) return;
-    const photos = asset.photos || [];
-    if (photos.length >= 5) { alert('Photo limit reached (5 per asset).'); return; }
-    const path = `assets/${asset.assetId || asset.id}/${Date.now()}_${file.name}`;
-    const sref = storageRef(storage, path);
-    const snap = await uploadBytes(sref, file, { contentType: file.type });
-    const url = await getDownloadURL(snap.ref);
-    const docRef = doc(db, 'extinguishers', asset.id);
-    const next = [...photos, { url, uploadedAt: new Date().toISOString(), path }];
-    await updateDoc(docRef, { photos: next });
-    setSelectedItem({ ...asset, photos: next });
-  };
-
-  const setMainAssetPhoto = async (asset, index) => {
-    const photos = asset.photos || [];
-    if (index <= 0 || index >= photos.length) return;
-    const reordered = [photos[index], ...photos.slice(0, index), ...photos.slice(index + 1)];
-    const docRef = doc(db, 'extinguishers', asset.id);
-    await updateDoc(docRef, { photos: reordered });
-    setSelectedItem({ ...asset, photos: reordered });
-  };
-
-  const removeAssetPhoto = async (asset, index) => {
-    const photos = asset.photos || [];
-    if (index < 0 || index >= photos.length) return;
-    const removing = photos[index];
-    const docRef = doc(db, 'extinguishers', asset.id);
-    const next = photos.filter((_, i) => i !== index);
-    await updateDoc(docRef, { photos: next });
-    // hard delete from storage (best-effort)
-    try { if (removing.path) await deleteObject(storageRef(storage, removing.path)); } catch (e) { console.warn('Failed to delete storage object', e); }
-    setSelectedItem({ ...asset, photos: next });
-  };

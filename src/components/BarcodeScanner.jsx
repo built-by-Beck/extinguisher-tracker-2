@@ -19,13 +19,17 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
 
   // Stop all scanning and release camera
   const stopScanner = useCallback(() => {
+    console.log('🛑 Stopping scanner...');
     if (scanIntervalRef.current) {
       clearInterval(scanIntervalRef.current);
       scanIntervalRef.current = null;
     }
 
     if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current.getTracks().forEach(track => {
+        console.log('Stopping track:', track.label, track.readyState);
+        track.stop();
+      });
       streamRef.current = null;
     }
 
@@ -35,6 +39,7 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
 
     setIsScanning(false);
     setDetectedCodes([]);
+    console.log('✅ Scanner stopped');
   }, []);
 
   // Helper: get a working media stream with fallbacks
@@ -59,6 +64,7 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
 
   // Initialize camera and barcode detector
   const initializeScanner = useCallback(async () => {
+    console.log('🎥 Initializing scanner...');
     setError('');
     setHasPermission(null);
     setScanCount(0);
@@ -66,6 +72,7 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
     try {
       // Check if BarcodeDetector is supported (native or polyfill)
       const BarcodeDetector = window.BarcodeDetector || BarcodeDetectorPolyfill;
+      console.log('BarcodeDetector available:', !!BarcodeDetector);
 
       // Check supported formats
       const formats = await BarcodeDetector.getSupportedFormats?.();
@@ -79,9 +86,12 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
           'qr_code', 'data_matrix', 'aztec', 'pdf417'
         ]
       });
+      console.log('✅ Barcode detector created');
 
       // Request camera with fallbacks
+      console.log('📸 Requesting camera access...');
       const stream = await getWorkingStream();
+      console.log('✅ Camera stream obtained:', stream.getVideoTracks()[0].label);
       
       setHasPermission(true);
       streamRef.current = stream;
@@ -277,16 +287,20 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
 
   // Initialize when opened
   useEffect(() => {
+    console.log('BarcodeScanner effect - isOpen:', isOpen);
     if (isOpen) {
-      initializeScanner();
+      // Small delay to ensure modal is fully rendered
+      const timer = setTimeout(() => {
+        initializeScanner();
+      }, 100);
+      return () => {
+        clearTimeout(timer);
+        stopScanner();
+      };
     } else {
       stopScanner();
     }
-
-    return () => {
-      stopScanner();
-    };
-  }, [isOpen, initializeScanner, stopScanner]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
