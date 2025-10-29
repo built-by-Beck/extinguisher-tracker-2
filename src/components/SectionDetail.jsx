@@ -160,14 +160,17 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
       )}
 
       {activeItem && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50">
-          <div className="bg-white w-full max-w-2xl rounded-lg p-4 shadow-lg">
-            <div className="flex justify-between items-center mb-2">
-              <div className="font-semibold text-lg">{activeItem.assetId} — {activeItem.section}</div>
-              <button onClick={() => setActiveItem(null)} className="text-gray-600">✕</button>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white w-full max-w-2xl rounded-lg shadow-lg my-8 max-h-[90vh] flex flex-col">
+            <div className="p-4 border-b">
+              <div className="flex justify-between items-center mb-2">
+                <div className="font-semibold text-lg">{activeItem.assetId} — {activeItem.section}</div>
+                <button onClick={() => setActiveItem(null)} className="text-gray-600">✕</button>
+              </div>
+              <div className="text-sm text-gray-600">{activeItem.vicinity} • {activeItem.parentLocation}</div>
             </div>
-            <div className="text-sm text-gray-600 mb-3">{activeItem.vicinity} • {activeItem.parentLocation}</div>
 
+            <div className="flex-1 overflow-y-auto p-4">
             {/* Basic Monthly Check */}
             <div className="mb-4">
               <h4 className="font-semibold text-md mb-2 text-gray-700 border-b pb-1">Basic Monthly Check</h4>
@@ -308,8 +311,8 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
                     setGpsLoading(true);
                     navigator.geolocation.getCurrentPosition(
                       (pos) => {
-                        const { latitude: lat, longitude: lng, accuracy } = pos.coords;
-                        setGps({ lat, lng, accuracy, capturedAt: new Date().toISOString() });
+                        const { latitude: lat, longitude: lng, accuracy, altitude, altitudeAccuracy } = pos.coords;
+                        setGps({ lat, lng, accuracy, altitude, altitudeAccuracy, capturedAt: new Date().toISOString() });
                         setGpsLoading(false);
                       },
                       (err) => {
@@ -322,22 +325,35 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
                   }}
                 >{gpsLoading ? 'Capturing…' : 'Capture GPS'}</button>
                 {gps && (
-                  <div className="text-sm text-gray-700 flex items-center gap-2">
-                    <span className="px-2 py-1 rounded bg-slate-100">
-                      {gps.lat.toFixed(6)}, {gps.lng.toFixed(6)} (±{Math.round(gps.accuracy)}m)
-                    </span>
-                    <a className="text-blue-600 underline" href={`https://maps.google.com/?q=${gps.lat},${gps.lng}`} target="_blank" rel="noreferrer">Open in Maps</a>
-                    <button className="text-red-600" onClick={()=>setGps(null)}>Clear</button>
+                  <div className="text-sm text-gray-700 flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-1 rounded bg-slate-100">
+                        {gps.lat.toFixed(6)}, {gps.lng.toFixed(6)} (±{Math.round(gps.accuracy)}m)
+                      </span>
+                      {gps.altitude !== null && gps.altitude !== undefined && (
+                        <span className="px-2 py-1 rounded bg-blue-100 text-blue-800">
+                          Alt: {Math.round(gps.altitude)}m {gps.altitudeAccuracy ? `(±${Math.round(gps.altitudeAccuracy)}m)` : ''}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <a className="text-blue-600 underline" href={`https://maps.google.com/?q=${gps.lat},${gps.lng}`} target="_blank" rel="noreferrer">Open in Maps</a>
+                      <button className="text-red-600" onClick={()=>setGps(null)}>Clear</button>
+                    </div>
                   </div>
                 )}
               </div>
             </div>
+            </div>
 
-            <div className="flex flex-wrap gap-2 justify-end">
-              <button onClick={() => { onEdit?.(activeItem); }} className="px-4 py-2 rounded bg-gray-200">Edit</button>
-              <button onClick={() => { onSaveNotes?.(activeItem, checklistSummary()); }} className="px-4 py-2 rounded bg-slate-200">Save Notes</button>
-              <button onClick={() => saveInspection('fail')} className="px-4 py-2 rounded bg-red-600 text-white">Fail</button>
-              <button onClick={() => saveInspection('pass')} className="px-4 py-2 rounded bg-green-600 text-white">Pass</button>
+            <div className="p-4 border-t bg-gray-50 flex flex-wrap gap-2 justify-end">
+              <button onClick={() => { onEdit?.(activeItem); }} className="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300">Edit</button>
+              <button onClick={() => {
+                const inspectionData = { checklistData: checklist, notes, photo: photoFile || null, gps: gps || null };
+                onSaveNotes?.(activeItem, checklistSummary(), inspectionData);
+              }} className="px-4 py-2 rounded bg-slate-200 hover:bg-slate-300">Save Notes</button>
+              <button onClick={() => saveInspection('fail')} className="px-4 py-2 rounded bg-red-600 text-white hover:bg-red-700">Fail</button>
+              <button onClick={() => saveInspection('pass')} className="px-4 py-2 rounded bg-green-600 text-white hover:bg-green-700">Pass</button>
             </div>
           </div>
         </div>

@@ -67,6 +67,16 @@ function App() {
   const [currentSectionNote, setCurrentSectionNote] = useState('');
   const [noteSelectedSection, setNoteSelectedSection] = useState('Main Hospital');
 
+  // Export options state
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportOptions, setExportOptions] = useState({
+    type: 'all', // 'all', 'passed', 'failed'
+    includePhotos: true,
+    includeGPS: true,
+    includeChecklist: true,
+    includeInspectionHistory: false
+  });
+
   const scanInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const timerIntervalRef = useRef(null);
@@ -521,8 +531,14 @@ function App() {
         vicinity: editItem.vicinity,
         serial: editItem.serial,
         parentLocation: editItem.parentLocation,
-        section: editItem.section
+        section: editItem.section,
+        location: editItem.location || null
       });
+
+      // Update selectedItem if it's the same item being edited
+      if (selectedItem && selectedItem.id === editItem.id) {
+        setSelectedItem({ ...editItem });
+      }
 
       setEditItem(null);
       alert('Changes saved successfully!');
@@ -560,7 +576,9 @@ function App() {
     }
   };
 
-  const exportData = (type = 'all') => {
+  const exportData = (options = exportOptions) => {
+    const { type, includePhotos, includeGPS, includeChecklist, includeInspectionHistory } = options;
+
     let dataToExport;
 
     if (type === 'passed') {
@@ -580,31 +598,61 @@ function App() {
         'Section': item.section,
         'Status': item.status.toUpperCase(),
         'Checked Date': item.checkedDate ? new Date(item.checkedDate).toLocaleString() : '',
+        'Notes': item.notes || ''
       };
 
-      // Add checklist details if available
-      if (item.checklistData) {
-        const checklist = item.checklistData;
-        return {
-          ...baseData,
-          'Pin Present': checklist.pinPresent || '',
-          'Tamper Seal Intact': checklist.tamperSealIntact || '',
-          'Gauge Correct Pressure': checklist.gaugeCorrectPressure || '',
-          'Weight Correct': checklist.weightCorrect || '',
-          'No Damage': checklist.noDamage || '',
-          'In Designated Location': checklist.inDesignatedLocation || '',
-          'Clearly Visible': checklist.clearlyVisible || '',
-          'Nearest Under 75ft': checklist.nearestUnder75ft || '',
-          'Top Under 5ft': checklist.topUnder5ft || '',
-          'Bottom Over 4in': checklist.bottomOver4in || '',
-          'Mounted Securely': checklist.mountedSecurely || '',
-          'Inspection Within 30 Days': checklist.inspectionWithin30Days || '',
-          'Tag Signed & Dated': checklist.tagSignedDated || '',
-          'Notes': item.notes
-        };
+      // Add GPS data if requested
+      if (includeGPS) {
+        const gps = item.lastInspectionGps || item.location;
+        if (gps) {
+          baseData['GPS Latitude'] = gps.lat ? gps.lat.toFixed(6) : '';
+          baseData['GPS Longitude'] = gps.lng ? gps.lng.toFixed(6) : '';
+          baseData['GPS Accuracy (m)'] = gps.accuracy ? Math.round(gps.accuracy) : '';
+          baseData['GPS Altitude (m)'] = gps.altitude !== null && gps.altitude !== undefined ? Math.round(gps.altitude) : '';
+          baseData['GPS Maps Link'] = gps.lat && gps.lng ? `https://maps.google.com/?q=${gps.lat},${gps.lng}` : '';
+        }
       }
 
-      return { ...baseData, 'Notes': item.notes };
+      // Add photo URLs if requested
+      if (includePhotos) {
+        const photos = item.photos || [];
+        if (photos.length > 0) {
+          baseData['Main Photo URL'] = photos[0]?.url || '';
+          baseData['All Photo URLs'] = photos.map(p => p.url).join(' | ');
+          baseData['Photo Count'] = photos.length;
+        }
+        if (item.lastInspectionPhotoUrl) {
+          baseData['Last Inspection Photo'] = item.lastInspectionPhotoUrl;
+        }
+      }
+
+      // Add checklist details if available and requested
+      if (includeChecklist && item.checklistData) {
+        const checklist = item.checklistData;
+        baseData['Pin Present'] = checklist.pinPresent || '';
+        baseData['Tamper Seal Intact'] = checklist.tamperSealIntact || '';
+        baseData['Gauge Correct Pressure'] = checklist.gaugeCorrectPressure || '';
+        baseData['Weight Correct'] = checklist.weightCorrect || '';
+        baseData['No Damage'] = checklist.noDamage || '';
+        baseData['In Designated Location'] = checklist.inDesignatedLocation || '';
+        baseData['Clearly Visible'] = checklist.clearlyVisible || '';
+        baseData['Nearest Under 75ft'] = checklist.nearestUnder75ft || '';
+        baseData['Top Under 5ft'] = checklist.topUnder5ft || '';
+        baseData['Bottom Over 4in'] = checklist.bottomOver4in || '';
+        baseData['Mounted Securely'] = checklist.mountedSecurely || '';
+        baseData['Inspection Within 30 Days'] = checklist.inspectionWithin30Days || '';
+        baseData['Tag Signed & Dated'] = checklist.tagSignedDated || '';
+      }
+
+      // Add inspection history if requested
+      if (includeInspectionHistory && item.inspectionHistory && item.inspectionHistory.length > 0) {
+        baseData['Inspection History Count'] = item.inspectionHistory.length;
+        baseData['Inspection History'] = item.inspectionHistory.map(h =>
+          `${new Date(h.date).toLocaleDateString()} - ${h.status.toUpperCase()}${h.notes ? ': ' + h.notes : ''}`
+        ).join(' | ');
+      }
+
+      return baseData;
     });
 
     const ws = XLSX.utils.json_to_sheet(formatted);
@@ -723,12 +771,28 @@ function App() {
   // helpers for SectionDetail actions
   const handlePass = (item, notesSummary = '', inspectionData = null) => handleInspection(item, 'pass', notesSummary, inspectionData);
   const handleFail = (item, notesSummary = '', inspectionData = null) => handleInspection(item, 'fail', notesSummary, inspectionData);
-  const handleSaveNotes = async (item, notesSummary) => {
+  const handleSaveNotes = async (item, notesSummary, inspectionData = null) => {
     try {
+      let photoUrl = null;
+      if (inspectionData?.photo instanceof File) {
+        const file = inspectionData.photo;
+        const path = `inspections/${item.assetId || item.id}/${Date.now()}_${file.name}`;
+        const sref = storageRef(storage, path);
+        const snapshot = await uploadBytes(sref, file, { contentType: file.type });
+        photoUrl = await getDownloadURL(snapshot.ref);
+      }
+      const gps = inspectionData?.gps || null;
+
       const docRef = doc(db, 'extinguishers', item.id);
-      await updateDoc(docRef, { notes: notesSummary || '' });
+      await updateDoc(docRef, {
+        notes: notesSummary || '',
+        checklistData: inspectionData?.checklistData || null,
+        lastInspectionPhotoUrl: photoUrl || null,
+        lastInspectionGps: gps || null
+      });
     } catch (e) {
       console.error('Error saving notes:', e);
+      alert('Error saving notes. Please try again.');
     }
   };
 
@@ -1221,25 +1285,15 @@ function App() {
                 <p className="text-sm text-gray-600 mb-2 font-medium">Export Data</p>
               </div>
               <button
-                onClick={() => exportData('all')}
+                onClick={() => {
+                  setExportOptions({ ...exportOptions, type: 'all' });
+                  setShowExportModal(true);
+                  setShowMenu(false);
+                }}
                 className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 transition w-full"
               >
                 <Download size={20} />
-                Export All Data
-              </button>
-              <button
-                onClick={() => exportData('passed')}
-                className="flex items-center gap-2 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 transition w-full"
-              >
-                <Download size={20} />
-                Export Passed Only
-              </button>
-              <button
-                onClick={() => exportData('failed')}
-                className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 transition w-full"
-              >
-                <Download size={20} />
-                Export Failed Only
+                Export Inspection Data
               </button>
               <button
                 onClick={exportTimeData}
@@ -1285,17 +1339,21 @@ function App() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 mb-6">
+        <div className="grid grid-cols-2 gap-4 mb-6 relative z-10">
           <button
             onClick={() => setShowCameraScanner(true)}
-            className="bg-blue-500 text-white p-4 rounded-lg shadow-lg hover:bg-blue-600 transition flex items-center justify-center gap-2 text-lg font-semibold"
+            onTouchStart={() => {}}
+            className="bg-blue-500 text-white p-4 rounded-lg shadow-lg hover:bg-blue-600 active:bg-blue-700 transition flex items-center justify-center gap-2 text-lg font-semibold cursor-pointer"
+            style={{ WebkitTapHighlightColor: 'rgba(0,0,0,0.1)', touchAction: 'manipulation' }}
           >
             <Camera size={24} />
             Camera Scan
           </button>
           <button
             onClick={() => setScanMode(true)}
-            className="bg-green-500 text-white p-4 rounded-lg shadow-lg hover:bg-green-600 transition flex items-center justify-center gap-2 text-lg font-semibold"
+            onTouchStart={() => {}}
+            className="bg-green-500 text-white p-4 rounded-lg shadow-lg hover:bg-green-600 active:bg-green-700 transition flex items-center justify-center gap-2 text-lg font-semibold cursor-pointer"
+            style={{ WebkitTapHighlightColor: 'rgba(0,0,0,0.1)', touchAction: 'manipulation' }}
           >
             <ScanLine size={24} />
             Manual Entry
@@ -1387,28 +1445,30 @@ function App() {
           </div>
         </div>
 
-        <Routes>
-          <Route
-            path="/"
-            element={<SectionGrid sections={SECTIONS} extinguishers={extinguishers} />}
-          />
-          <Route
-            path="/section/:name"
-            element={
-              <SectionDetail
-                extinguishers={extinguishers}
-                onSelectItem={setSelectedItem}
-                getViewMode={getSectionViewMode}
-                toggleView={toggleSectionView}
-                countsFor={countsForSection}
-                onPass={handlePass}
-                onFail={handleFail}
-                onEdit={handleEdit}
-                onSaveNotes={handleSaveNotes}
-              />
-            }
-          />
-        </Routes>
+        <div className="relative z-0">
+          <Routes>
+            <Route
+              path="/"
+              element={<SectionGrid sections={SECTIONS} extinguishers={extinguishers} />}
+            />
+            <Route
+              path="/section/:name"
+              element={
+                <SectionDetail
+                  extinguishers={extinguishers}
+                  onSelectItem={setSelectedItem}
+                  getViewMode={getSectionViewMode}
+                  toggleView={toggleSectionView}
+                  countsFor={countsForSection}
+                  onPass={handlePass}
+                  onFail={handleFail}
+                  onEdit={handleEdit}
+                  onSaveNotes={handleSaveNotes}
+                />
+              }
+            />
+          </Routes>
+        </div>
       </div>
 
       {showTimeModal && (
@@ -1680,8 +1740,8 @@ function App() {
                       setNewItemGpsLoading(true);
                       navigator.geolocation.getCurrentPosition(
                         (pos) => {
-                          const { latitude: lat, longitude: lng, accuracy } = pos.coords;
-                          setNewItemGps({ lat, lng, accuracy, capturedAt: new Date().toISOString() });
+                          const { latitude: lat, longitude: lng, accuracy, altitude, altitudeAccuracy } = pos.coords;
+                          setNewItemGps({ lat, lng, accuracy, altitude, altitudeAccuracy, capturedAt: new Date().toISOString() });
                           setNewItemGpsLoading(false);
                         },
                         (err) => {
@@ -1694,12 +1754,21 @@ function App() {
                     }}
                   >{newItemGpsLoading ? 'Capturing…' : 'Capture GPS'}</button>
                   {newItemGps && (
-                    <div className="text-sm text-gray-700 flex items-center gap-2">
-                      <span className="px-2 py-1 rounded bg-slate-100">
-                        {newItemGps.lat.toFixed(6)}, {newItemGps.lng.toFixed(6)} (±{Math.round(newItemGps.accuracy)}m)
-                      </span>
-                      <a className="text-blue-600 underline" href={`https://maps.google.com/?q=${newItemGps.lat},${newItemGps.lng}`} target="_blank" rel="noreferrer">Open in Maps</a>
-                      <button className="text-red-600" onClick={()=>setNewItemGps(null)}>Clear</button>
+                    <div className="text-sm text-gray-700 flex flex-col gap-1">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-1 rounded bg-slate-100">
+                          {newItemGps.lat.toFixed(6)}, {newItemGps.lng.toFixed(6)} (±{Math.round(newItemGps.accuracy)}m)
+                        </span>
+                        {newItemGps.altitude !== null && newItemGps.altitude !== undefined && (
+                          <span className="px-2 py-1 rounded bg-blue-100 text-blue-800">
+                            Alt: {Math.round(newItemGps.altitude)}m {newItemGps.altitudeAccuracy ? `(±${Math.round(newItemGps.altitudeAccuracy)}m)` : ''}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <a className="text-blue-600 underline" href={`https://maps.google.com/?q=${newItemGps.lat},${newItemGps.lng}`} target="_blank" rel="noreferrer">Open in Maps</a>
+                        <button className="text-red-600" onClick={()=>setNewItemGps(null)}>Clear</button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1802,13 +1871,22 @@ function App() {
                 const gps = selectedItem.lastInspectionGps || selectedItem.location;
                 if (!gps) return null;
                 return (
-                  <div className="flex items-center gap-2">
-                    <div className="text-sm text-gray-400">Location</div>
-                    <div className="text-sm text-white bg-black/40 px-2 py-1 rounded">
-                      {Number(gps.lat).toFixed(6)}, {Number(gps.lng).toFixed(6)}
-                      {gps.accuracy ? (<span className="text-gray-300"> (±{Math.round(gps.accuracy)}m)</span>) : null}
+                  <div>
+                    <div className="text-sm text-gray-400 mb-1">GPS Location</div>
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-white bg-black/40 px-2 py-1 rounded">
+                          {Number(gps.lat).toFixed(6)}, {Number(gps.lng).toFixed(6)}
+                          {gps.accuracy ? (<span className="text-gray-300"> (±{Math.round(gps.accuracy)}m)</span>) : null}
+                        </span>
+                        {gps.altitude !== null && gps.altitude !== undefined && (
+                          <span className="text-sm text-white bg-blue-600/60 px-2 py-1 rounded">
+                            Alt: {Math.round(gps.altitude)}m {gps.altitudeAccuracy ? `(±${Math.round(gps.altitudeAccuracy)}m)` : ''}
+                          </span>
+                        )}
+                      </div>
                       <a
-                        className="ml-2 text-blue-300 underline"
+                        className="text-blue-300 underline text-sm"
                         href={`https://maps.google.com/?q=${gps.lat},${gps.lng}`}
                         target="_blank"
                         rel="noreferrer"
@@ -2035,8 +2113,8 @@ function App() {
                       if (!('geolocation' in navigator)) { alert('Geolocation not supported on this device/browser.'); return; }
                       navigator.geolocation.getCurrentPosition(
                         (pos) => {
-                          const { latitude: lat, longitude: lng, accuracy } = pos.coords;
-                          setEditItem({ ...editItem, location: { lat, lng, accuracy, capturedAt: new Date().toISOString() } });
+                          const { latitude: lat, longitude: lng, accuracy, altitude, altitudeAccuracy } = pos.coords;
+                          setEditItem({ ...editItem, location: { lat, lng, accuracy, altitude, altitudeAccuracy, capturedAt: new Date().toISOString() } });
                         },
                         (err) => {
                           console.warn('GPS error:', err);
@@ -2047,12 +2125,21 @@ function App() {
                     }}
                   >Capture GPS</button>
                   {editItem.location && (
-                    <div className="text-sm text-gray-700 flex items-center gap-2">
-                      <span className="px-2 py-1 rounded bg-slate-100">
-                        {Number(editItem.location.lat).toFixed(6)}, {Number(editItem.location.lng).toFixed(6)} (±{Math.round(editItem.location.accuracy || 0)}m)
-                      </span>
-                      <a className="text-blue-600 underline" href={`https://maps.google.com/?q=${editItem.location.lat},${editItem.location.lng}`} target="_blank" rel="noreferrer">Open in Maps</a>
-                      <button className="text-red-600" onClick={()=> setEditItem({ ...editItem, location: null })}>Clear</button>
+                    <div className="text-sm text-gray-700 flex flex-col gap-1">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-1 rounded bg-slate-100">
+                          {Number(editItem.location.lat).toFixed(6)}, {Number(editItem.location.lng).toFixed(6)} (±{Math.round(editItem.location.accuracy || 0)}m)
+                        </span>
+                        {editItem.location.altitude !== null && editItem.location.altitude !== undefined && (
+                          <span className="px-2 py-1 rounded bg-blue-100 text-blue-800">
+                            Alt: {Math.round(editItem.location.altitude)}m {editItem.location.altitudeAccuracy ? `(±${Math.round(editItem.location.altitudeAccuracy)}m)` : ''}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <a className="text-blue-600 underline" href={`https://maps.google.com/?q=${editItem.location.lat},${editItem.location.lng}`} target="_blank" rel="noreferrer">Open in Maps</a>
+                        <button className="text-red-600" onClick={()=> setEditItem({ ...editItem, location: null })}>Clear</button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -2123,6 +2210,111 @@ function App() {
                 >
                   Cancel
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Export Options Modal */}
+      {showExportModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">Export Options</h3>
+              <button onClick={() => setShowExportModal(false)}>
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Data Type Selection */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Which items to export?
+                </label>
+                <select
+                  value={exportOptions.type}
+                  onChange={(e) => setExportOptions({ ...exportOptions, type: e.target.value })}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="all">All Extinguishers</option>
+                  <option value="passed">Passed Only</option>
+                  <option value="failed">Failed Only</option>
+                </select>
+              </div>
+
+              {/* Include Options */}
+              <div className="border-t pt-3">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Include in export:
+                </label>
+
+                <div className="space-y-2">
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={exportOptions.includePhotos}
+                      onChange={(e) => setExportOptions({ ...exportOptions, includePhotos: e.target.checked })}
+                      className="mr-2 h-4 w-4"
+                    />
+                    <span className="text-sm">Photo URLs (clickable links)</span>
+                  </label>
+
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={exportOptions.includeGPS}
+                      onChange={(e) => setExportOptions({ ...exportOptions, includeGPS: e.target.checked })}
+                      className="mr-2 h-4 w-4"
+                    />
+                    <span className="text-sm">GPS Location & Altitude</span>
+                  </label>
+
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={exportOptions.includeChecklist}
+                      onChange={(e) => setExportOptions({ ...exportOptions, includeChecklist: e.target.checked })}
+                      className="mr-2 h-4 w-4"
+                    />
+                    <span className="text-sm">Detailed Checklist Data</span>
+                  </label>
+
+                  <label className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={exportOptions.includeInspectionHistory}
+                      onChange={(e) => setExportOptions({ ...exportOptions, includeInspectionHistory: e.target.checked })}
+                      className="mr-2 h-4 w-4"
+                    />
+                    <span className="text-sm">Full Inspection History</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Export Button */}
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => {
+                    exportData(exportOptions);
+                    setShowExportModal(false);
+                  }}
+                  className="flex-1 bg-green-500 text-white p-3 rounded-lg hover:bg-green-600 flex items-center justify-center gap-2"
+                >
+                  <Download size={20} />
+                  Export to Excel
+                </button>
+                <button
+                  onClick={() => setShowExportModal(false)}
+                  className="px-6 bg-gray-300 text-gray-700 p-3 rounded-lg hover:bg-gray-400"
+                >
+                  Cancel
+                </button>
+              </div>
+
+              <div className="text-xs text-gray-500 mt-2">
+                Export will include: Basic info + your selected options above
               </div>
             </div>
           </div>

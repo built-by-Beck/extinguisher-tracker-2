@@ -90,14 +90,25 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
 
       // Request camera with fallbacks
       console.log('📸 Requesting camera access...');
+      console.log('Navigator.mediaDevices available:', !!navigator.mediaDevices);
+      console.log('getUserMedia available:', !!navigator.mediaDevices?.getUserMedia);
+      console.log('Platform:', navigator.platform);
+      console.log('User Agent:', navigator.userAgent);
+
       const stream = await getWorkingStream();
       console.log('✅ Camera stream obtained:', stream.getVideoTracks()[0].label);
+      console.log('Video track settings:', stream.getVideoTracks()[0].getSettings());
       
       setHasPermission(true);
       streamRef.current = stream;
 
       if (videoRef.current) {
         const video = videoRef.current;
+
+        // Set attributes for iOS Safari
+        video.setAttribute('playsinline', 'true');
+        video.setAttribute('webkit-playsinline', 'true');
+
         const startVideo = async () => {
           video.srcObject = streamRef.current;
           await new Promise((resolve) => {
@@ -108,17 +119,28 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
             await video.play();
           } catch (e) {
             console.warn('video.play() rejected on init:', e);
+            // iOS Safari sometimes needs a retry
+            await new Promise(r => setTimeout(r, 50));
+            try {
+              await video.play();
+            } catch (e2) {
+              console.warn('video.play() retry failed:', e2);
+            }
           }
         };
 
         // First attempt
         await startVideo();
 
+        // iOS Safari needs extra time for video dimensions to populate
+        await new Promise(r => setTimeout(r, 500));
+
         // Validate frames; if black, auto re-init once (mimics successful manual switch)
         const track = streamRef.current?.getVideoTracks?.()[0];
         const ready = () => video.videoWidth > 0 && video.videoHeight > 0 && track && track.readyState === 'live';
         if (!ready()) {
-          await new Promise(r => setTimeout(r, 400));
+          console.warn('Video not ready, waiting longer...');
+          await new Promise(r => setTimeout(r, 800));
         }
         if (!ready()) {
           console.warn('No frames after first init; auto re-initializing camera');
@@ -126,7 +148,7 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
           const retry = await getWorkingStream();
           streamRef.current = retry;
           await startVideo();
-          await new Promise(r => setTimeout(r, 200));
+          await new Promise(r => setTimeout(r, 500));
         }
 
         if (video.videoWidth === 0 || video.videoHeight === 0) {
@@ -136,17 +158,24 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
         startContinuousScanning();
       }
     } catch (err) {
-      console.error('Scanner initialization error:', err);
+      console.error('❌ Scanner initialization error:', err);
+      console.error('Error name:', err.name);
+      console.error('Error message:', err.message);
+      console.error('Error stack:', err.stack);
       setHasPermission(false);
 
       if (err.name === 'NotAllowedError') {
-        setError('Camera permission denied. Please allow camera access in your browser settings.');
+        setError('Camera permission denied. Please reset: Settings > Safari > Advanced > Website Data > Delete this site, then refresh.');
       } else if (err.name === 'NotFoundError') {
         setError('No camera found on this device.');
       } else if (err.name === 'NotSupportedError') {
-        setError('Barcode scanning not supported on this browser/device.');
+        setError('Camera requires HTTPS. This site must be accessed via https:// (not http://) on iOS devices.');
+      } else if (err.name === 'NotReadableError') {
+        setError('Camera is already in use by another app. Please close other camera apps and try again.');
+      } else if (err.name === 'SecurityError') {
+        setError('Security Error: Camera blocked. Make sure you are using HTTPS and have not previously denied permission.');
       } else {
-        setError(`Error: ${err.message || String(err)}`);
+        setError(`Error (${err.name}): ${err.message || String(err)}`);
       }
     }
   }, []);
@@ -260,12 +289,24 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
       streamRef.current = stream;
       if (videoRef.current) {
         const video = videoRef.current;
+
+        // Set attributes for iOS Safari
+        video.setAttribute('playsinline', 'true');
+        video.setAttribute('webkit-playsinline', 'true');
+
         video.srcObject = stream;
         await new Promise((resolve) => {
           const onLoaded = () => { video.removeEventListener('loadedmetadata', onLoaded); resolve(); };
           video.addEventListener('loadedmetadata', onLoaded);
         });
-        await video.play();
+        try {
+          await video.play();
+        } catch (e) {
+          console.warn('video.play() rejected on switch:', e);
+          // iOS Safari sometimes needs a retry
+          await new Promise(r => setTimeout(r, 50));
+          await video.play();
+        }
         if (video.videoWidth === 0 || video.videoHeight === 0) {
           await new Promise(r => setTimeout(r, 150));
         }
@@ -315,7 +356,9 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
           </h3>
           <button
             onClick={handleClose}
-            className="p-2 hover:bg-gray-100 rounded-full transition"
+            onTouchStart={() => {}}
+            className="p-2 hover:bg-gray-100 active:bg-gray-200 rounded-full transition cursor-pointer"
+            style={{ WebkitTapHighlightColor: 'rgba(0,0,0,0.1)', touchAction: 'manipulation' }}
             aria-label="Close scanner"
           >
             <X size={24} />
@@ -329,7 +372,9 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
             <p className="text-red-600 mb-4 font-medium">{error}</p>
             <button
               onClick={initializeScanner}
-              className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition font-medium"
+              onTouchStart={() => {}}
+              className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 active:bg-blue-800 transition font-medium cursor-pointer"
+              style={{ WebkitTapHighlightColor: 'rgba(0,0,0,0.2)', touchAction: 'manipulation' }}
             >
               <Camera className="inline mr-2" size={20} />
               Try Again
@@ -358,6 +403,7 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
                 className="w-full h-[400px] object-cover"
                 autoPlay
                 playsInline
+                webkit-playsinline=""
                 muted
               />
               <canvas
@@ -401,14 +447,18 @@ function BarcodeScanner({ onScan, onClose, isOpen }) {
             <div className="flex gap-3">
               <button
                 onClick={switchCamera}
-                className="flex-1 bg-gray-600 text-white py-3 rounded-lg hover:bg-gray-700 transition font-medium flex items-center justify-center gap-2"
+                onTouchStart={() => {}}
+                className="flex-1 bg-gray-600 text-white py-3 rounded-lg hover:bg-gray-700 active:bg-gray-800 transition font-medium flex items-center justify-center gap-2 cursor-pointer"
+                style={{ WebkitTapHighlightColor: 'rgba(0,0,0,0.2)', touchAction: 'manipulation' }}
               >
                 <Camera size={20} />
                 Switch Camera
               </button>
               <button
                 onClick={handleClose}
-                className="flex-1 bg-red-500 text-white py-3 rounded-lg hover:bg-red-600 transition font-medium"
+                onTouchStart={() => {}}
+                className="flex-1 bg-red-500 text-white py-3 rounded-lg hover:bg-red-600 active:bg-red-700 transition font-medium cursor-pointer"
+                style={{ WebkitTapHighlightColor: 'rgba(0,0,0,0.2)', touchAction: 'manipulation' }}
               >
                 Cancel
               </button>
