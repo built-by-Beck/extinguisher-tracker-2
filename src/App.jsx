@@ -882,7 +882,7 @@ function App() {
       };
       console.log('Current status counts:', statusCounts);
 
-      // Create inspection log entry
+      // Try to create inspection log entry (optional - won't block reset if it fails)
       const inspectionLog = {
         userId: user.uid,
         resetDate: currentDate,
@@ -901,10 +901,21 @@ function App() {
       };
       console.log('Created inspection log:', inspectionLog);
 
-      // Save inspection log
-      console.log('Saving inspection log...');
-      await addDoc(collection(db, 'inspectionLogs'), inspectionLog);
-      console.log('Inspection log saved successfully');
+      // Try to save inspection log (won't block reset if permissions denied)
+      try {
+        console.log('Attempting to save inspection log...');
+        await addDoc(collection(db, 'inspectionLogs'), inspectionLog);
+        console.log('Inspection log saved successfully to Firestore');
+      } catch (logError) {
+        console.warn('Could not save inspection log to Firestore (this is OK):', logError.message);
+        console.log('Inspection log will be saved to localStorage instead');
+
+        // Save to localStorage as backup
+        const existingLogs = JSON.parse(localStorage.getItem(`inspectionLogs_${user.uid}`) || '[]');
+        existingLogs.push(inspectionLog);
+        localStorage.setItem(`inspectionLogs_${user.uid}`, JSON.stringify(existingLogs));
+        console.log('Inspection log saved to localStorage successfully');
+      }
 
       // Reset all extinguisher statuses
       console.log('Starting to reset', snapshot.docs.length, 'extinguishers...');
