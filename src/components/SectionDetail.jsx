@@ -9,6 +9,8 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
   const [scanValue, setScanValue] = useState('');
   const scanRef = useRef(null);
   const [activeItem, setActiveItem] = useState(null);
+  const [sortBy, setSortBy] = useState('assetId');
+  const [sortOrder, setSortOrder] = useState('asc');
   const [checklist, setChecklist] = useState({
     pinPresent: 'pass',
     tamperSealIntact: 'pass',
@@ -41,8 +43,36 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
 
   const items = useMemo(() => {
     const list = extinguishers.filter(e => e.section === section);
-    return list.filter(e => mode === 'unchecked' ? e.status === 'pending' : (e.status === 'pass' || e.status === 'fail'));
-  }, [extinguishers, section, mode]);
+    const filtered = list.filter(e => mode === 'unchecked' ? e.status === 'pending' : (e.status === 'pass' || e.status === 'fail'));
+
+    // Sort the filtered list
+    const sorted = [...filtered].sort((a, b) => {
+      let compareValue = 0;
+
+      if (sortBy === 'assetId') {
+        const aId = String(a.assetId || '').toLowerCase();
+        const bId = String(b.assetId || '').toLowerCase();
+
+        // Try to extract numbers for numeric comparison
+        const aNum = parseInt(aId.match(/\d+/)?.[0] || '0');
+        const bNum = parseInt(bId.match(/\d+/)?.[0] || '0');
+
+        if (aNum !== bNum) {
+          compareValue = aNum - bNum;
+        } else {
+          compareValue = aId.localeCompare(bId);
+        }
+      } else if (sortBy === 'location') {
+        const aLoc = `${a.vicinity || ''} ${a.parentLocation || ''}`.toLowerCase();
+        const bLoc = `${b.vicinity || ''} ${b.parentLocation || ''}`.toLowerCase();
+        compareValue = aLoc.localeCompare(bLoc);
+      }
+
+      return sortOrder === 'asc' ? compareValue : -compareValue;
+    });
+
+    return sorted;
+  }, [extinguishers, section, mode, sortBy, sortOrder]);
 
   const counts = countsFor?.(section) || { checked: 0, unchecked: 0 };
 
@@ -113,7 +143,7 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <button className="text-blue-600" onClick={() => navigate('/')}>← All Sections</button>
+        <button className="text-blue-600" onClick={() => navigate(-1)}>← Back</button>
         <div className="font-semibold text-xl">{section}</div>
         <div />
       </div>
@@ -148,15 +178,72 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
       {items.length === 0 ? (
         <div className="bg-white p-8 rounded-lg shadow text-center text-gray-500">No items found.</div>
       ) : (
-        <div className="space-y-3">
-          {items.map(item => (
-            <div key={item.id} onClick={() => setActiveItem(item)} className="bg-white p-4 rounded-lg shadow hover:shadow-md cursor-pointer">
-              <div className="font-bold text-lg">{item.assetId}</div>
-              <div className="text-sm text-gray-600">{item.vicinity} • {item.parentLocation}</div>
-              <div className="text-xs text-gray-500 mt-1">Status: {item.status}</div>
+        <>
+          <div className="space-y-3">
+            {items.map(item => (
+              <div key={item.id} onClick={() => setActiveItem(item)} className="bg-white p-4 rounded-lg shadow hover:shadow-md cursor-pointer">
+                <div className="font-bold text-lg">{item.assetId}</div>
+                <div className="text-sm text-gray-600">{item.vicinity} • {item.parentLocation}</div>
+                <div className="text-xs text-gray-500 mt-1">Status: {item.status}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Sort Controls */}
+          <div className="bg-white p-4 rounded-lg shadow mt-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-700">Sort by:</span>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setSortBy('assetId')}
+                    className={`px-3 py-1 rounded text-sm font-medium transition ${
+                      sortBy === 'assetId'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    Asset ID
+                  </button>
+                  <button
+                    onClick={() => setSortBy('location')}
+                    className={`px-3 py-1 rounded text-sm font-medium transition ${
+                      sortBy === 'location'
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                  >
+                    Location
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-gray-700">Order:</span>
+                <button
+                  onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+                  className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 transition flex items-center gap-2 font-medium"
+                >
+                  {sortOrder === 'asc' ? (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
+                      </svg>
+                      Ascending
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h13M3 8h9m-9 4h9m5-4v12m0 0l-4-4m4 4l4-4" />
+                      </svg>
+                      Descending
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
-          ))}
-        </div>
+          </div>
+        </>
       )}
 
       {activeItem && (

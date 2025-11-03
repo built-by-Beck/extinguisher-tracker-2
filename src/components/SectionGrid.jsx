@@ -18,7 +18,7 @@ export default function SectionGrid({ sections, extinguishers }) {
         return (
           <button
             key={name}
-            onClick={() => navigate(`/section/${encodeURIComponent(name)}`)}
+            onClick={() => navigate(`section/${encodeURIComponent(name)}`)}
             className="p-4 rounded-xl border bg-white shadow hover:shadow-md text-left"
           >
             <div className="font-semibold text-lg">{name}</div>
