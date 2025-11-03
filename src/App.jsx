@@ -655,10 +655,17 @@ function App() {
       return baseData;
     });
 
+    // Generate filename with previous month's name and current timestamp
+    const now = new Date();
+    const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1);
+    const monthName = previousMonth.toLocaleDateString('en-US', { month: 'long' });
+    const timestamp = now.toISOString().split('T')[0]; // YYYY-MM-DD format
+    const typeLabel = type === 'all' ? 'All' : type === 'passed' ? 'Passed' : 'Failed';
+
     const ws = XLSX.utils.json_to_sheet(formatted);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Inspections');
-    XLSX.writeFile(wb, `fire-extinguishers-${type}-${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.writeFile(wb, `${monthName}_Extinguisher_Checks_${typeLabel}_${timestamp}_Export.xlsx`);
   };
 
   const exportTimeData = () => {
@@ -672,10 +679,16 @@ function App() {
       'Section Notes': sectionNotes[section]?.notes || ''
     }));
 
+    // Generate filename with previous month's name and current timestamp
+    const now = new Date();
+    const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1);
+    const monthName = previousMonth.toLocaleDateString('en-US', { month: 'long' });
+    const timestamp = now.toISOString().split('T')[0]; // YYYY-MM-DD format
+
     const ws = XLSX.utils.json_to_sheet(timeData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Time Tracking');
-    XLSX.writeFile(wb, `time-tracking-${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.writeFile(wb, `${monthName}_Time_Tracking_${timestamp}_Export.xlsx`);
   };
 
   const clearAllData = async () => {
