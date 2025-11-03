@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Routes, Route, useNavigate } from 'react-router-dom';
+import { Routes, Route, useNavigate, Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
@@ -1113,7 +1113,9 @@ function App() {
             <div className="flex items-center gap-4">
               <div className="text-sm">
                 <span className="text-gray-400">Fire Safety Management</span>
-                <span className="text-white font-semibold ml-2">Fire Extinguisher Tracker</span>
+                <Link to="/" className="text-white font-semibold ml-2 hover:text-red-400 transition">
+                  Fire Extinguisher Tracker
+                </Link>
               </div>
             </div>
             <div className="flex items-center gap-2">
