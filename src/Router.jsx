@@ -27,7 +27,7 @@ const Router = () => {
       <Route path="/privacy" element={<PrivacyPage />} />
 
       {/* Main Application - No ads shown here */}
-      <Route path="/app" element={<App />} />
+      <Route path="/app/*" element={<App />} />
 
       {/* Catch all - redirect to landing page */}
       <Route path="*" element={<Navigate to="/" replace />} />

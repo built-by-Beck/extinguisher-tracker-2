@@ -1474,11 +1474,11 @@ function App() {
         <div className="relative z-0">
           <Routes>
             <Route
-              path="/"
+              index
               element={<SectionGrid sections={SECTIONS} extinguishers={extinguishers} />}
             />
             <Route
-              path="/section/:name"
+              path="section/:name"
               element={
                 <SectionDetail
                   extinguishers={extinguishers}
