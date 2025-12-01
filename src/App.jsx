@@ -3,7 +3,7 @@ import { Routes, Route, useNavigate, Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce } from 'firebase/firestore';
 import { auth, db, storage } from './firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { deleteObject } from 'firebase/storage';
@@ -741,28 +741,59 @@ function App() {
       const existingNote = sectionNotes[noteSelectedSection];
 
       if (existingNote && existingNote.id) {
-        // Update existing note
         const docRef = doc(db, 'sectionNotes', existingNote.id);
         await updateDoc(docRef, {
           notes: currentSectionNote,
           lastUpdated: new Date().toISOString()
         });
       } else {
-        // Create new note
-        await addDoc(collection(db, 'sectionNotes'), {
-          userId: user.uid,
-          section: noteSelectedSection,
-          notes: currentSectionNote,
-          lastUpdated: new Date().toISOString(),
-          createdAt: new Date().toISOString()
-        });
+        // Try to find any existing doc for this user + section (avoids duplicates)
+        const findQuery = query(
+          collection(db, 'sectionNotes'),
+          where('userId', '==', user.uid),
+          where('section', '==', noteSelectedSection)
+        );
+        const found = await getDocsOnce(findQuery);
+        if (!found.empty) {
+          const docRef = found.docs[0].ref;
+          await updateDoc(docRef, {
+            notes: currentSectionNote,
+            lastUpdated: new Date().toISOString()
+          });
+        } else {
+          // Prefer deterministic ID to satisfy potential security rules
+          const slug = `${noteSelectedSection}`
+            .toLowerCase()
+            .replace(/\s+/g, '_')
+            .replace(/[^a-z0-9_]/g, '');
+          const id = `${user.uid}__${slug || 'section'}`;
+          const targetRef = doc(collection(db, 'sectionNotes'), id);
+          try {
+            await setDoc(targetRef, {
+              userId: user.uid,
+              section: noteSelectedSection,
+              notes: currentSectionNote,
+              lastUpdated: new Date().toISOString(),
+              createdAt: new Date().toISOString()
+            }, { merge: true });
+          } catch (err) {
+            // Fallback to addDoc (older rules may allow this)
+            await addDoc(collection(db, 'sectionNotes'), {
+              userId: user.uid,
+              section: noteSelectedSection,
+              notes: currentSectionNote,
+              lastUpdated: new Date().toISOString(),
+              createdAt: new Date().toISOString()
+            });
+          }
+        }
       }
 
       setShowSectionNotesModal(false);
       alert(`Notes for ${noteSelectedSection} saved successfully!`);
     } catch (error) {
-      console.error('Error saving section notes:', error);
-      alert('Error saving section notes. Please try again.');
+      console.error('Error saving section notes:', { code: error?.code, message: error?.message, section: noteSelectedSection });
+      alert(`Error saving section notes for "${noteSelectedSection}".\n\n${error?.code || ''} ${error?.message || ''}`.trim());
     }
   };
 
