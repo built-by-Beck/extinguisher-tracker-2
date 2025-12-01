@@ -299,39 +299,78 @@ function App() {
           const workbook = XLSX.read(data, { type: 'array' });
           const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
           const jsonData = XLSX.utils.sheet_to_json(firstSheet);
+          // Prepare a local index of existing extinguishers by Asset ID (string)
+          // Use loaded state; if not yet loaded, the onSnapshot handler will refresh UI after import
+          const existingIndex = new Map(
+            (extinguishers || [])
+              .filter(x => x && x.assetId)
+              .map(x => [String(x.assetId), x])
+          );
 
-          const parsed = jsonData.map((row, index) => {
-            const assetId = row['Asset ID'] || row['Asset\nID'] || row['AssetID'] || '';
-            const vicinity = row['Vicinity'] || '';
-            const serial = row['Serial'] || '';
-            const parentLocation = row['Parent Location'] || row['Parent\nLocation'] || '';
+          // Normalize and parse incoming rows; allow a Section column to override the dropdown
+          const parsed = jsonData
+            .map((row) => {
+              const assetIdRaw = row['Asset ID'] || row['Asset\nID'] || row['AssetID'] || row['assetId'] || row['ID'] || '';
+              const assetId = String(assetIdRaw || '').trim();
+              if (!assetId) return null;
 
-            return {
-              assetId: String(assetId),
-              vicinity,
-              serial,
-              parentLocation,
-              section: importSection,
-              status: 'pending',
-              checkedDate: null,
-              notes: '',
-              inspectionHistory: [],
-              userId: user.uid,
-              createdAt: new Date().toISOString()
-            };
-          }).filter(item => item.assetId);
+              const vicinity = String(row['Vicinity'] || row['vicinity'] || '').trim();
+              const serial = String(row['Serial'] || row['serial'] || '').trim();
+              const parentLocation = String(row['Parent Location'] || row['Parent\nLocation'] || row['parentLocation'] || '').trim();
+              const sectionFromRow = row['Section'] || row['SECTION'] || row['section'] || row['Building'] || row['Area'] || null;
+              const resolvedSection = sectionFromRow ? String(sectionFromRow).trim() : importSection;
 
-          // Add each item to Firestore
+              return {
+                assetId,
+                vicinity,
+                serial,
+                parentLocation,
+                section: resolvedSection,
+              };
+            })
+            .filter(Boolean);
+
+          let added = 0;
+          let updated = 0;
+
+          // Merge: update existing by assetId; add new otherwise. Never delete or overwrite photos/history.
           for (const item of parsed) {
+            const existing = existingIndex.get(item.assetId);
             try {
-              await addDoc(collection(db, 'extinguishers'), item);
-          } catch (error) {
-            console.error('Error adding item:', error);
+              if (existing) {
+                const docRef = doc(db, 'extinguishers', existing.id);
+                await updateDoc(docRef, {
+                  vicinity: item.vicinity,
+                  serial: item.serial,
+                  parentLocation: item.parentLocation,
+                  section: item.section,
+                  // Intentionally do NOT touch: status, notes, photos, inspectionHistory, lastInspection*
+                  updatedAt: new Date().toISOString()
+                });
+                updated += 1;
+              } else {
+                await addDoc(collection(db, 'extinguishers'), {
+                  assetId: item.assetId,
+                  vicinity: item.vicinity,
+                  serial: item.serial,
+                  parentLocation: item.parentLocation,
+                  section: item.section,
+                  status: 'pending',
+                  checkedDate: null,
+                  notes: '',
+                  inspectionHistory: [],
+                  userId: user.uid,
+                  createdAt: new Date().toISOString()
+                });
+                added += 1;
+              }
+            } catch (error) {
+              console.error('Error merging item', item.assetId, error);
+            }
           }
-        }
 
-        setShowImportModal(false);
-        alert(`Successfully imported ${parsed.length} fire extinguishers to ${importSection}!`);
+          setShowImportModal(false);
+          alert(`Import complete.\n\nAdded: ${added}\nUpdated: ${updated}\n\nNo existing photos, logs, or inspection history were removed.`);
         } catch (error) {
           alert('Error reading file. Please make sure it is a valid CSV or Excel file.');
           console.error(error);
@@ -1316,7 +1355,7 @@ function App() {
               {adminMode && (
                 <>
                   <div className="border-t pt-2 mt-4">
-                    <p className="text-sm text-gray-600 mb-2 font-medium">Database Management (Admin)</p>
+                  <p className="text-sm text-gray-600 mb-2 font-medium">Database Management (Admin)</p>
                   </div>
                   <button
                     onClick={() => {
@@ -1326,7 +1365,7 @@ function App() {
                     className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition w-full"
                   >
                     <Upload size={20} />
-                    Import Data File (By Section)
+                    Import Data File
                   </button>
                   <button
                     onClick={() => {
@@ -1685,7 +1724,7 @@ function App() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Which section does this file contain?
+                  Default section for rows without a Section column
                 </label>
                 <select
                   value={importSection}
@@ -1696,6 +1735,9 @@ function App() {
                     <option key={section} value={section}>{section}</option>
                   ))}
                 </select>
+                <p className="mt-2 text-xs text-gray-500">
+                  If your file has a <span className="font-semibold">Section</span> column, that value will be used for each row.
+                </p>
               </div>
               <label className="flex items-center gap-2 px-4 py-3 bg-blue-500 text-white rounded cursor-pointer hover:bg-blue-600 transition w-full justify-center">
                 <Upload size={20} />
