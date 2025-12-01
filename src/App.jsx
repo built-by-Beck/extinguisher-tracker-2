@@ -11,6 +11,7 @@ import Login from './Login';
 import CameraScanner from './components/BarcodeScanner.jsx';
 import SectionGrid from './components/SectionGrid';
 import SectionDetail from './components/SectionDetail';
+import ExtinguisherDetailView from './components/ExtinguisherDetailView';
 
 const SECTIONS = [
   'Main Hospital',
@@ -25,6 +26,7 @@ const SECTIONS = [
 ];
 
 function App() {
+  const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [extinguishers, setExtinguishers] = useState([]);
@@ -1085,7 +1087,7 @@ function App() {
         {/* Banner Image */}
         <div className="mb-2 rounded-lg overflow-hidden shadow-2xl" style={{ height: '270px' }}>
           <img
-            src="/banner.jpg"
+            src="/banner.png"
             alt="Fire Extinguisher Tracker - built by Beck"
             className="w-full"
             style={{
@@ -1493,6 +1495,10 @@ function App() {
                 />
               }
             />
+            <Route
+              path="extinguisher/:assetId"
+              element={<ExtinguisherDetailView extinguishers={extinguishers} />}
+            />
           </Routes>
         </div>
       </div>
@@ -1868,7 +1874,19 @@ function App() {
                 <X size={24} />
               </button>
             </div>
-            
+
+            {/* View Full Details Button */}
+            <button
+              onClick={() => {
+                navigate(`/app/extinguisher/${selectedItem.assetId}`);
+                setSelectedItem(null);
+              }}
+              className="w-full mb-4 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-lg transition-colors font-semibold"
+            >
+              <FileText size={20} />
+              View Full Details & Photos
+            </button>
+
             <div className="space-y-4 mb-6">
               <div className="grid grid-cols-2 gap-4">
                 <div>

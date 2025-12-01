@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { Info } from 'lucide-react';
 
 export default function SectionDetail({ extinguishers, onSelectItem, getViewMode, toggleView, countsFor, onPass, onFail, onEdit, onSaveNotes }) {
   const { name } = useParams();
@@ -181,10 +182,22 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
         <>
           <div className="space-y-3">
             {items.map(item => (
-              <div key={item.id} onClick={() => setActiveItem(item)} className="bg-white p-4 rounded-lg shadow hover:shadow-md cursor-pointer">
-                <div className="font-bold text-lg">{item.assetId}</div>
-                <div className="text-sm text-gray-600">{item.vicinity} • {item.parentLocation}</div>
-                <div className="text-xs text-gray-500 mt-1">Status: {item.status}</div>
+              <div key={item.id} className="bg-white p-4 rounded-lg shadow hover:shadow-md relative">
+                <div onClick={() => setActiveItem(item)} className="cursor-pointer">
+                  <div className="font-bold text-lg pr-10">{item.assetId}</div>
+                  <div className="text-sm text-gray-600">{item.vicinity} • {item.parentLocation}</div>
+                  <div className="text-xs text-gray-500 mt-1">Status: {item.status}</div>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate(`/app/extinguisher/${item.assetId}`);
+                  }}
+                  className="absolute top-3 right-3 p-2 text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                  title="View Details"
+                >
+                  <Info size={20} />
+                </button>
               </div>
             ))}
           </div>
