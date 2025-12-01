@@ -438,11 +438,16 @@ function App() {
     try {
       let photoUrl = null;
       if (inspectionData?.photo instanceof File) {
-        const file = inspectionData.photo;
-        const path = `inspections/${item.assetId || item.id}/${Date.now()}_${file.name}`;
-        const sref = storageRef(storage, path);
-        const snapshot = await uploadBytes(sref, file, { contentType: file.type });
-        photoUrl = await getDownloadURL(snapshot.ref);
+        try {
+          const file = inspectionData.photo;
+          const safeSeg = String(item.assetId || item.id || 'asset').replace(/[^a-zA-Z0-9_-]/g, '_');
+          const path = `inspections/${safeSeg}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+          const sref = storageRef(storage, path);
+          const snapshot = await uploadBytes(sref, file, { contentType: file.type });
+          photoUrl = await getDownloadURL(snapshot.ref);
+        } catch (uploadErr) {
+          console.warn('Photo upload failed; saving inspection without photo:', uploadErr);
+        }
       }
       const gps = inspectionData?.gps || null;
       const inspection = {
@@ -468,8 +473,8 @@ function App() {
 
       setSelectedItem(null);
     } catch (error) {
-      console.error('Error updating inspection:', error);
-      alert('Error saving inspection. Please try again.');
+      console.error('Error updating inspection:', { code: error?.code, message: error?.message });
+      alert(`Error saving inspection.\n\n${error?.code || ''} ${error?.message || ''}`.trim());
     }
   };
 
@@ -860,11 +865,16 @@ function App() {
     try {
       let photoUrl = null;
       if (inspectionData?.photo instanceof File) {
-        const file = inspectionData.photo;
-        const path = `inspections/${item.assetId || item.id}/${Date.now()}_${file.name}`;
-        const sref = storageRef(storage, path);
-        const snapshot = await uploadBytes(sref, file, { contentType: file.type });
-        photoUrl = await getDownloadURL(snapshot.ref);
+        try {
+          const file = inspectionData.photo;
+          const safeSeg = String(item.assetId || item.id || 'asset').replace(/[^a-zA-Z0-9_-]/g, '_');
+          const path = `inspections/${safeSeg}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+          const sref = storageRef(storage, path);
+          const snapshot = await uploadBytes(sref, file, { contentType: file.type });
+          photoUrl = await getDownloadURL(snapshot.ref);
+        } catch (uploadErr) {
+          console.warn('Photo upload failed; saving notes without photo:', uploadErr);
+        }
       }
       const gps = inspectionData?.gps || null;
 
@@ -876,8 +886,8 @@ function App() {
         lastInspectionGps: gps || null
       });
     } catch (e) {
-      console.error('Error saving notes:', e);
-      alert('Error saving notes. Please try again.');
+      console.error('Error saving notes:', { code: e?.code, message: e?.message });
+      alert(`Error saving notes.\n\n${e?.code || ''} ${e?.message || ''}`.trim());
     }
   };
 
