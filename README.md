@@ -584,3 +584,17 @@ For questions, support, or licensing inquiries, please contact the developer.
 ---
 
 Built with React + Vite + Firebase | Cloud-First with Offline Support
+### Database Backup (JSON)
+
+- Export full database: Menu → Admin → "Export Database (JSON)".
+  - Includes your `extinguishers`, `sectionNotes`, and `inspectionLogs` collections (scoped to your user).
+  - Saves a timestamped `.json` file you can store as a backup.
+- Import backup: Menu → Admin → "Import Database (JSON)" and select a previously exported file.
+  - Replaces your current data with the backup contents (confirms before proceeding).
+  - Photos referenced by URLs remain in Firebase Storage; importing does not re-upload images.
+
+### Database Export (CSV)
+
+- Export importer-friendly CSV: Menu → Admin → "Export Database (CSV)".
+  - Columns: Asset ID, Serial, Vicinity, Parent Location, Section
+  - This CSV can be imported directly using "Import Data File".

@@ -3,7 +3,7 @@ import { Routes, Route, useNavigate, Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce, writeBatch } from 'firebase/firestore';
 import { auth, db, storage } from './firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { deleteObject } from 'firebase/storage';
@@ -81,6 +81,7 @@ function App() {
 
   const scanInputRef = useRef(null);
   const fileInputRef = useRef(null);
+  const dbBackupInputRef = useRef(null);
   const timerIntervalRef = useRef(null);
 
   // Authentication listener
@@ -284,6 +285,189 @@ function App() {
     // Firestore handles the state updates through onSnapshot
     // This function is now mainly for compatibility
     setExtinguishers(newData);
+  };
+
+  // Export user's Firestore data to a JSON backup file
+  const exportDatabaseBackup = async () => {
+    try {
+      if (!user) {
+        alert('Please sign in first.');
+        return;
+      }
+
+      // Fetch user-scoped collections
+      const [extSnap, notesSnap, logsSnap] = await Promise.all([
+        getDocs(query(collection(db, 'extinguishers'), where('userId', '==', user.uid))),
+        getDocs(query(collection(db, 'sectionNotes'), where('userId', '==', user.uid))),
+        // inspectionLogs are optional; ignore if rules restrict
+        (async () => {
+          try {
+            return await getDocs(query(collection(db, 'inspectionLogs'), where('userId', '==', user.uid)));
+          } catch (e) {
+            return { docs: [] };
+          }
+        })()
+      ]);
+
+      const extinguishersData = extSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const sectionNotesData = notesSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const inspectionLogsData = logsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      const backup = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        app: 'fire-extinguisher-tracker',
+        userId: user.uid,
+        collections: {
+          extinguishers: extinguishersData,
+          sectionNotes: sectionNotesData,
+          inspectionLogs: inspectionLogsData
+        }
+      };
+
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const now = new Date();
+      const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1);
+      const monthName = previousMonth.toLocaleDateString('en-US', { month: 'long' });
+      const timestamp = now.toISOString().replace(/[:.]/g, '-');
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${monthName}_Database_Backup_${timestamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Error exporting database backup:', e);
+      alert('Failed to export database backup.');
+    }
+  };
+
+  // Export core extinguisher database to CSV with importer-friendly headers
+  const exportDatabaseCsv = async () => {
+    try {
+      if (!user) { alert('Please sign in first.'); return; }
+      // Map to canonical column names expected by importer
+      const rows = (extinguishers || []).map(item => ({
+        'Asset ID': item.assetId || '',
+        'Serial': item.serial || '',
+        'Vicinity': item.vicinity || '',
+        'Parent Location': item.parentLocation || '',
+        'Section': item.section || ''
+      }));
+
+      // Ensure stable ordering
+      const header = ['Asset ID', 'Serial', 'Vicinity', 'Parent Location', 'Section'];
+      const ws = XLSX.utils.json_to_sheet(rows, { header });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Extinguishers');
+      const now = new Date();
+      const date = now.toISOString().split('T')[0];
+      XLSX.writeFile(wb, `Extinguisher_Database_Export_${date}.csv`);
+    } catch (e) {
+      console.error('Error exporting CSV:', e);
+      alert('Failed to export CSV.');
+    }
+  };
+
+  // Replace current user's Firestore data with a JSON backup file
+  const handleImportDatabaseBackup = async (e) => {
+    const file = e.target.files?.[0];
+    // Reset the input so selecting the same file again triggers change
+    e.target.value = null;
+    if (!file) return;
+    if (!user) { alert('Please sign in first.'); return; }
+
+    try {
+      const text = await file.text();
+      const backup = JSON.parse(text);
+      if (!backup || typeof backup !== 'object' || !backup.collections) {
+        alert('Invalid backup file.');
+        return;
+      }
+
+      const { collections } = backup;
+      const extList = Array.isArray(collections.extinguishers) ? collections.extinguishers : [];
+      const notesList = Array.isArray(collections.sectionNotes) ? collections.sectionNotes : [];
+      const logsList = Array.isArray(collections.inspectionLogs) ? collections.inspectionLogs : [];
+
+      const confirmText = [
+        'This will replace your current database with the backup file.',
+        `Extinguishers in backup: ${extList.length}`,
+        `Section notes in backup: ${notesList.length}`,
+        `Inspection logs in backup: ${logsList.length}`,
+        '',
+        'Continue?'
+      ].join('\n');
+      if (!window.confirm(confirmText)) return;
+
+      // 1) Delete current user's docs (chunked for safety)
+      const deleteCollectionDocs = async (collName) => {
+        const snap = await getDocs(query(collection(db, collName), where('userId', '==', user.uid)));
+        const docs = snap.docs;
+        // Firestore batch limit is 500
+        for (let i = 0; i < docs.length; i += 450) {
+          const slice = docs.slice(i, i + 450);
+          const batch = writeBatch(db);
+          slice.forEach(d => batch.delete(doc(db, collName, d.id)));
+          await batch.commit();
+        }
+      };
+
+      await deleteCollectionDocs('extinguishers');
+      await deleteCollectionDocs('sectionNotes');
+      await deleteCollectionDocs('inspectionLogs');
+
+      // 2) Import backup docs for this user
+      const safeString = (val) => (val == null ? '' : String(val));
+
+      // Extinguishers
+      for (const item of extList) {
+        const data = { ...item };
+        delete data.id;
+        data.userId = user.uid;
+        // Ensure required fields exist
+        data.assetId = safeString(data.assetId);
+        data.status = data.status || 'pending';
+        data.createdAt = data.createdAt || new Date().toISOString();
+        await addDoc(collection(db, 'extinguishers'), data);
+      }
+
+      // Section notes with deterministic IDs to avoid duplicates
+      for (const note of notesList) {
+        const data = { ...note };
+        delete data.id;
+        data.userId = user.uid;
+        const section = safeString(data.section || data.Section || 'General');
+        const slug = section.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+        const id = `${user.uid}__${slug || 'section'}`;
+        await setDoc(doc(collection(db, 'sectionNotes'), id), {
+          ...data,
+          section,
+          lastUpdated: data.lastUpdated || new Date().toISOString(),
+          createdAt: data.createdAt || new Date().toISOString()
+        }, { merge: true });
+      }
+
+      // Inspection logs (best-effort; ignore failures)
+      for (const log of logsList) {
+        const data = { ...log };
+        delete data.id;
+        data.userId = user.uid;
+        try {
+          await addDoc(collection(db, 'inspectionLogs'), data);
+        } catch (e) {
+          // Non-fatal: rules might block writes; keep importing other data
+          console.warn('Skipping inspection log import due to rules:', e?.code || e?.message || e);
+        }
+      }
+
+      alert('Database import completed successfully.');
+    } catch (err) {
+      console.error('Error importing database backup:', err);
+      alert('Failed to import database backup.');
+    }
   };
 
   const handleFileUpload = async (e) => {
@@ -1369,6 +1553,36 @@ function App() {
                   </div>
                   <button
                     onClick={() => {
+                      exportDatabaseCsv();
+                      setShowMenu(false);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-sky-500 text-white rounded hover:bg-sky-600 transition w-full"
+                  >
+                    <Download size={20} />
+                    Export Database (CSV)
+                  </button>
+                  <button
+                    onClick={() => {
+                      exportDatabaseBackup();
+                      setShowMenu(false);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-emerald-500 text-white rounded hover:bg-emerald-600 transition w-full"
+                  >
+                    <FileText size={20} />
+                    Export Database (JSON)
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (dbBackupInputRef.current) dbBackupInputRef.current.click();
+                      setShowMenu(false);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 transition w-full"
+                  >
+                    <Upload size={20} />
+                    Import Database (JSON)
+                  </button>
+                  <button
+                    onClick={() => {
                       setShowImportModal(true);
                       setShowMenu(false);
                     }}
@@ -1767,6 +1981,15 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* Hidden input for JSON database import */}
+      <input
+        ref={dbBackupInputRef}
+        type="file"
+        accept="application/json,.json"
+        onChange={handleImportDatabaseBackup}
+        className="hidden"
+      />
 
       {showAddModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
