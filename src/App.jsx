@@ -40,6 +40,7 @@ function App() {
   const [sectionFilterCollapsed, setSectionFilterCollapsed] = useState(false);
   const [inspectionLogs, setInspectionLogs] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
+  const [selectedItemNotes, setSelectedItemNotes] = useState('');
   const [editItem, setEditItem] = useState(null);
   const [showMenu, setShowMenu] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -280,6 +281,11 @@ function App() {
       scanInputRef.current.focus();
     }
   }, [scanMode]);
+
+  // Keep the modal notes field in sync with the selected item
+  useEffect(() => {
+    setSelectedItemNotes(selectedItem?.notes || '');
+  }, [selectedItem]);
 
   const saveData = async (newData) => {
     // Firestore handles the state updates through onSnapshot
@@ -1060,15 +1066,21 @@ function App() {
           console.warn('Photo upload failed; saving notes without photo:', uploadErr);
         }
       }
-      const gps = inspectionData?.gps || null;
+      const gps = inspectionData?.gps;
 
       const docRef = doc(db, 'extinguishers', item.id);
-      await updateDoc(docRef, {
-        notes: notesSummary || '',
-        checklistData: inspectionData?.checklistData || null,
-        lastInspectionPhotoUrl: photoUrl || null,
-        lastInspectionGps: gps || null
-      });
+      // Only update fields that are explicitly provided
+      const updates = { notes: notesSummary || '' };
+      if (inspectionData && typeof inspectionData.checklistData !== 'undefined') {
+        updates.checklistData = inspectionData.checklistData;
+      }
+      if (photoUrl) {
+        updates.lastInspectionPhotoUrl = photoUrl;
+      }
+      if (gps) {
+        updates.lastInspectionGps = gps;
+      }
+      await updateDoc(docRef, updates);
     } catch (e) {
       console.error('Error saving notes:', { code: e?.code, message: e?.message });
       alert(`Error saving notes.\n\n${e?.code || ''} ${e?.message || ''}`.trim());
@@ -1351,7 +1363,7 @@ function App() {
         {/* Banner Image */}
         <div className="mb-2 rounded-lg overflow-hidden shadow-2xl" style={{ height: '270px' }}>
           <img
-            src="/banner.png"
+            src={`${import.meta.env.BASE_URL}banner.png`}
             alt="Fire Extinguisher Tracker - built by Beck"
             className="w-full"
             style={{
@@ -2336,25 +2348,34 @@ function App() {
               )}
             </div>
 
-            {selectedItem.status === 'pending' && (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">
-                    Inspection Notes (Optional)
-                  </label>
-                  <textarea
-                    id="notes"
-                    rows="3"
-                    className="w-full p-3 border border-gray-600 rounded-lg bg-gray-700 text-white placeholder-gray-400 focus:ring-2 focus:ring-red-500 focus:border-red-500"
-                    placeholder="Add any notes about this inspection..."
-                  />
+            {/* Notes always visible */}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Notes
+                </label>
+                <textarea
+                  rows="3"
+                  value={selectedItemNotes}
+                  onChange={(e) => setSelectedItemNotes(e.target.value)}
+                  className="w-full p-3 border border-gray-600 rounded-lg bg-gray-700 text-white placeholder-gray-400 focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                  placeholder="Add any notes about this extinguisher..."
+                />
+                <div className="mt-3 flex gap-2">
+                  <button
+                    onClick={() => handleSaveNotes(selectedItem, selectedItemNotes)}
+                    className="bg-slate-600 text-white px-4 py-2 rounded-lg hover:bg-slate-700 font-semibold transition shadow"
+                  >
+                    Save Notes
+                  </button>
                 </div>
+              </div>
 
+              {selectedItem.status === 'pending' && (
                 <div className="grid grid-cols-2 gap-4">
                   <button
                     onClick={() => {
-                      const notes = document.getElementById('notes').value;
-                      handleInspection(selectedItem, 'pass', notes);
+                      handleInspection(selectedItem, 'pass', selectedItemNotes);
                     }}
                     className="bg-green-600 text-white p-4 rounded-lg hover:bg-green-700 flex items-center justify-center gap-2 font-bold text-lg shadow-lg transition"
                   >
@@ -2363,8 +2384,7 @@ function App() {
                   </button>
                   <button
                     onClick={() => {
-                      const notes = document.getElementById('notes').value;
-                      handleInspection(selectedItem, 'fail', notes);
+                      handleInspection(selectedItem, 'fail', selectedItemNotes);
                     }}
                     className="bg-red-600 text-white p-4 rounded-lg hover:bg-red-700 flex items-center justify-center gap-2 font-bold text-lg shadow-lg transition"
                   >
@@ -2372,8 +2392,8 @@ function App() {
                     FAIL
                   </button>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
             <div className="mt-4 pt-4 border-t border-gray-700">
               <button
