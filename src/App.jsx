@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate, Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
-import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText } from 'lucide-react';
+import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce, writeBatch } from 'firebase/firestore';
 import { auth, db, storage } from './firebase';
@@ -12,6 +12,7 @@ import CameraScanner from './components/BarcodeScanner.jsx';
 import SectionGrid from './components/SectionGrid';
 import SectionDetail from './components/SectionDetail';
 import ExtinguisherDetailView from './components/ExtinguisherDetailView';
+import Calculator from './components/Calculator.jsx';
 
 const SECTIONS = [
   'Main Hospital',
@@ -1400,6 +1401,14 @@ function App() {
               <span className="text-xs text-gray-400">Logged in as:</span>
               <span className="text-sm text-white">{user.email}</span>
               <button
+                onClick={() => navigate('/app/calculator')}
+                className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded flex items-center gap-2"
+                title="Open Fire Extinguisher Calculator"
+              >
+                <CalculatorIcon size={18} />
+                Calculator
+              </button>
+              <button
                 onClick={() => setAdminMode(!adminMode)}
                 className={`p-2 hover:bg-gray-600 rounded flex items-center gap-2 ${adminMode ? 'bg-gray-600' : ''}`}
                 title={adminMode ? 'Exit Admin Mode' : 'Admin Mode'}
@@ -1804,6 +1813,10 @@ function App() {
             <Route
               path="extinguisher/:assetId"
               element={<ExtinguisherDetailView extinguishers={extinguishers} />}
+            />
+            <Route
+              path="calculator"
+              element={<Calculator />}
             />
           </Routes>
         </div>
