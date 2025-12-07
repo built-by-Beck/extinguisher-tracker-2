@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce, writeBatch } from 'firebase/firestore';
-import { auth, db, storage } from './firebase';
+import { auth, db, storage, workspacesRef } from './firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { deleteObject } from 'firebase/storage';
 import Login from './Login';
@@ -81,6 +81,14 @@ function App() {
     includeInspectionHistory: false
   });
 
+  // Workspace state for multi-month support
+  const [workspaces, setWorkspaces] = useState([]);
+  const [currentWorkspaceId, setCurrentWorkspaceId] = useState(null);
+  const [showWorkspaceSwitcher, setShowWorkspaceSwitcher] = useState(false);
+  const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
+  const [workspaceLongPressTimer, setWorkspaceLongPressTimer] = useState(null);
+  const [workspaceBadgePressing, setWorkspaceBadgePressing] = useState(false);
+
   const scanInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const dbBackupInputRef = useRef(null);
@@ -95,18 +103,101 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // Load data when user changes
+  // Load workspaces and handle migration
   useEffect(() => {
     if (!user) {
-      setExtinguishers([]);
-      setSectionTimes({});
+      setWorkspaces([]);
+      setCurrentWorkspaceId(null);
       return;
     }
 
-    // Load extinguishers from Firestore
+    // Load workspaces from Firestore
+    const workspacesQuery = query(
+      collection(db, 'workspaces'),
+      where('userId', '==', user.uid),
+      where('status', '==', 'active')
+    );
+
+    const unsubscribeWorkspaces = onSnapshot(workspacesQuery, async (snapshot) => {
+      const workspaceData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setWorkspaces(workspaceData);
+
+      // If no workspaces exist, we need to migrate existing data
+      if (workspaceData.length === 0) {
+        // Check if there are extinguishers without workspaceId (legacy data)
+        const legacyQuery = query(
+          collection(db, 'extinguishers'),
+          where('userId', '==', user.uid)
+        );
+        const legacySnap = await getDocs(legacyQuery);
+
+        if (legacySnap.docs.length > 0) {
+          // Create initial workspace for current month
+          const now = new Date();
+          const monthLabel = now.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }).replace(' ', " '");
+          const monthYear = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+          const newWorkspace = {
+            userId: user.uid,
+            label: monthLabel,
+            monthYear: monthYear,
+            status: 'active',
+            createdAt: now.toISOString(),
+            archivedAt: null
+          };
+
+          const wsDoc = await addDoc(collection(db, 'workspaces'), newWorkspace);
+
+          // Migrate existing extinguishers to this workspace
+          const batch = writeBatch(db);
+          legacySnap.docs.forEach(docSnapshot => {
+            if (!docSnapshot.data().workspaceId) {
+              batch.update(doc(db, 'extinguishers', docSnapshot.id), {
+                workspaceId: wsDoc.id
+              });
+            }
+          });
+          await batch.commit();
+
+          setCurrentWorkspaceId(wsDoc.id);
+          localStorage.setItem(`currentWorkspace_${user.uid}`, wsDoc.id);
+        }
+      } else {
+        // Restore saved workspace or use first active one
+        const savedWorkspaceId = localStorage.getItem(`currentWorkspace_${user.uid}`);
+        const validWorkspace = workspaceData.find(ws => ws.id === savedWorkspaceId);
+
+        if (validWorkspace) {
+          setCurrentWorkspaceId(savedWorkspaceId);
+        } else {
+          // Use most recent workspace
+          const sorted = workspaceData.sort((a, b) =>
+            new Date(b.createdAt) - new Date(a.createdAt)
+          );
+          setCurrentWorkspaceId(sorted[0].id);
+          localStorage.setItem(`currentWorkspace_${user.uid}`, sorted[0].id);
+        }
+      }
+    });
+
+    return () => unsubscribeWorkspaces();
+  }, [user]);
+
+  // Load extinguishers filtered by current workspace
+  useEffect(() => {
+    if (!user || !currentWorkspaceId) {
+      setExtinguishers([]);
+      return;
+    }
+
+    // Load extinguishers from Firestore filtered by workspace
     const extinguishersQuery = query(
       collection(db, 'extinguishers'),
-      where('userId', '==', user.uid)
+      where('userId', '==', user.uid),
+      where('workspaceId', '==', currentWorkspaceId)
     );
 
     const unsubscribeExtinguishers = onSnapshot(extinguishersQuery, (snapshot) => {
@@ -117,13 +208,26 @@ function App() {
       setExtinguishers(extinguisherData);
     });
 
-    // Load section times from localStorage (keep this local for now)
-    const savedTimes = localStorage.getItem(`sectionTimes_${user.uid}`);
+    // Load section times from localStorage scoped to workspace
+    const savedTimes = localStorage.getItem(`sectionTimes_${user.uid}_${currentWorkspaceId}`);
     if (savedTimes) {
       setSectionTimes(JSON.parse(savedTimes));
+    } else {
+      setSectionTimes({});
     }
 
-    // Load section notes from Firestore
+    return () => {
+      unsubscribeExtinguishers();
+    };
+  }, [user, currentWorkspaceId]);
+
+  // Load section notes (global, not workspace-scoped)
+  useEffect(() => {
+    if (!user) {
+      setSectionNotes({});
+      return;
+    }
+
     const sectionNotesQuery = query(
       collection(db, 'sectionNotes'),
       where('userId', '==', user.uid)
@@ -142,17 +246,14 @@ function App() {
       setSectionNotes(notesData);
     });
 
-    return () => {
-      unsubscribeExtinguishers();
-      unsubscribeSectionNotes();
-    };
+    return () => unsubscribeSectionNotes();
   }, [user]);
 
   useEffect(() => {
-    if (user && Object.keys(sectionTimes).length > 0) {
-      localStorage.setItem(`sectionTimes_${user.uid}`, JSON.stringify(sectionTimes));
+    if (user && currentWorkspaceId && Object.keys(sectionTimes).length > 0) {
+      localStorage.setItem(`sectionTimes_${user.uid}_${currentWorkspaceId}`, JSON.stringify(sectionTimes));
     }
-  }, [sectionTimes, user]);
+  }, [sectionTimes, user, currentWorkspaceId]);
 
   useEffect(() => {
     if (activeTimer && timerStartTime) {
@@ -240,8 +341,199 @@ function App() {
     if (window.confirm('Clear all time tracking data?')) {
       setSectionTimes({});
       stopTimer();
-      localStorage.removeItem('sectionTimes');
+      if (currentWorkspaceId) {
+        localStorage.removeItem(`sectionTimes_${user.uid}_${currentWorkspaceId}`);
+      }
     }
+  };
+
+  // Workspace helper functions
+  const getCurrentWorkspace = () => {
+    return workspaces.find(ws => ws.id === currentWorkspaceId);
+  };
+
+  const getWorkspaceStats = (workspaceExtinguishers) => {
+    const total = workspaceExtinguishers.length;
+    const passed = workspaceExtinguishers.filter(e => e.status === 'pass').length;
+    const failed = workspaceExtinguishers.filter(e => e.status === 'fail').length;
+    const pending = workspaceExtinguishers.filter(e => e.status === 'pending').length;
+    return { total, passed, failed, pending };
+  };
+
+  const switchWorkspace = (workspaceId) => {
+    if (workspaceId !== currentWorkspaceId) {
+      // Stop any active timer before switching
+      if (activeTimer) {
+        pauseTimer();
+      }
+      setCurrentWorkspaceId(workspaceId);
+      localStorage.setItem(`currentWorkspace_${user.uid}`, workspaceId);
+    }
+    setShowWorkspaceSwitcher(false);
+  };
+
+  const createWorkspace = async (label, copyFrom = null) => {
+    try {
+      const now = new Date();
+      const monthYear = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+      const newWorkspace = {
+        userId: user.uid,
+        label: label,
+        monthYear: monthYear,
+        status: 'active',
+        createdAt: now.toISOString(),
+        archivedAt: null
+      };
+
+      const wsDoc = await addDoc(collection(db, 'workspaces'), newWorkspace);
+
+      // If copying from another workspace, copy all extinguishers with pending status
+      if (copyFrom) {
+        const sourceQuery = query(
+          collection(db, 'extinguishers'),
+          where('userId', '==', user.uid),
+          where('workspaceId', '==', copyFrom)
+        );
+        const sourceSnap = await getDocs(sourceQuery);
+
+        const batch = writeBatch(db);
+        sourceSnap.docs.forEach(docSnapshot => {
+          const data = docSnapshot.data();
+          const newDocRef = doc(collection(db, 'extinguishers'));
+          batch.set(newDocRef, {
+            assetId: data.assetId,
+            serial: data.serial || '',
+            vicinity: data.vicinity || '',
+            parentLocation: data.parentLocation || '',
+            section: data.section,
+            status: 'pending',
+            checkedDate: null,
+            notes: '',
+            inspectionHistory: [],
+            userId: user.uid,
+            workspaceId: wsDoc.id,
+            createdAt: now.toISOString(),
+            photoUrl: data.photoUrl || null,
+            location: data.location || null
+          });
+        });
+        await batch.commit();
+      }
+
+      setShowCreateWorkspace(false);
+      switchWorkspace(wsDoc.id);
+      return wsDoc.id;
+    } catch (error) {
+      console.error('Error creating workspace:', error);
+      alert('Error creating workspace. Please try again.');
+      return null;
+    }
+  };
+
+  const archiveWorkspace = async (workspaceId) => {
+    try {
+      const workspace = workspaces.find(ws => ws.id === workspaceId);
+      if (!workspace) return;
+
+      // Save inspection log before archiving
+      const extQuery = query(
+        collection(db, 'extinguishers'),
+        where('userId', '==', user.uid),
+        where('workspaceId', '==', workspaceId)
+      );
+      const extSnap = await getDocs(extQuery);
+      const stats = getWorkspaceStats(extSnap.docs.map(d => d.data()));
+
+      const inspectionLog = {
+        userId: user.uid,
+        workspaceId: workspaceId,
+        archivedDate: new Date().toISOString(),
+        monthYear: workspace.label,
+        totalExtinguishers: stats.total,
+        passedCount: stats.passed,
+        failedCount: stats.failed,
+        pendingCount: stats.pending,
+        extinguisherResults: extSnap.docs.map(doc => ({
+          assetId: doc.data().assetId,
+          section: doc.data().section,
+          status: doc.data().status,
+          checkedDate: doc.data().checkedDate,
+          notes: doc.data().notes
+        }))
+      };
+
+      try {
+        await addDoc(collection(db, 'inspectionLogs'), inspectionLog);
+      } catch (logError) {
+        console.warn('Could not save inspection log to Firestore:', logError.message);
+        const existingLogs = JSON.parse(localStorage.getItem(`inspectionLogs_${user.uid}`) || '[]');
+        existingLogs.push(inspectionLog);
+        localStorage.setItem(`inspectionLogs_${user.uid}`, JSON.stringify(existingLogs));
+      }
+
+      // Archive the workspace
+      await updateDoc(doc(db, 'workspaces', workspaceId), {
+        status: 'archived',
+        archivedAt: new Date().toISOString()
+      });
+
+      // If this was the current workspace, switch to another
+      if (workspaceId === currentWorkspaceId) {
+        const remaining = workspaces.filter(ws => ws.id !== workspaceId);
+        if (remaining.length > 0) {
+          switchWorkspace(remaining[0].id);
+        } else {
+          setCurrentWorkspaceId(null);
+        }
+      }
+    } catch (error) {
+      console.error('Error archiving workspace:', error);
+      alert('Error archiving workspace. Please try again.');
+    }
+  };
+
+  // Check for auto-archive when all items are inspected
+  useEffect(() => {
+    if (!currentWorkspaceId || extinguishers.length === 0) return;
+
+    const stats = getWorkspaceStats(extinguishers);
+    if (stats.pending === 0 && stats.total > 0) {
+      // All items inspected - offer to archive
+      const workspace = getCurrentWorkspace();
+      if (workspace && !workspace.autoArchiveOffered) {
+        // We could auto-archive, but let's just notify the user
+        // They can manually archive when ready
+      }
+    }
+  }, [extinguishers, currentWorkspaceId]);
+
+  // Workspace badge long-press handlers
+  const handleWorkspaceBadgeMouseDown = () => {
+    setWorkspaceBadgePressing(true);
+    const timer = setTimeout(() => {
+      setShowWorkspaceSwitcher(true);
+      setWorkspaceBadgePressing(false);
+    }, 500);
+    setWorkspaceLongPressTimer(timer);
+  };
+
+  const handleWorkspaceBadgeMouseUp = () => {
+    if (workspaceLongPressTimer) {
+      clearTimeout(workspaceLongPressTimer);
+      setWorkspaceLongPressTimer(null);
+    }
+    setWorkspaceBadgePressing(false);
+  };
+
+  const handleWorkspaceBadgeTouchStart = (e) => {
+    e.preventDefault();
+    handleWorkspaceBadgeMouseDown();
+  };
+
+  const handleWorkspaceBadgeTouchEnd = (e) => {
+    e.preventDefault();
+    handleWorkspaceBadgeMouseUp();
   };
 
   // Remove localStorage backup since we're using Firestore
@@ -434,6 +726,7 @@ function App() {
         const data = { ...item };
         delete data.id;
         data.userId = user.uid;
+        data.workspaceId = currentWorkspaceId; // Add to current workspace
         // Ensure required fields exist
         data.assetId = safeString(data.assetId);
         data.status = data.status || 'pending';
@@ -551,6 +844,7 @@ function App() {
                   notes: '',
                   inspectionHistory: [],
                   userId: user.uid,
+                  workspaceId: currentWorkspaceId,
                   createdAt: new Date().toISOString()
                 });
                 added += 1;
@@ -602,6 +896,7 @@ function App() {
         notes: '',
         inspectionHistory: [],
         userId: user.uid,
+        workspaceId: currentWorkspaceId,
         createdAt: new Date().toISOString(),
         photoUrl: assetPhotoUrl,
         location: newItemGps || null
@@ -1396,6 +1691,32 @@ function App() {
                   Fire Extinguisher Tracker
                 </Link>
               </div>
+              {/* Workspace Badge - Long press to switch */}
+              <div
+                className={`ml-4 px-4 py-2 rounded-lg text-base font-bold cursor-pointer select-none transition-all shadow-md border-2 ${
+                  workspaceBadgePressing
+                    ? 'bg-yellow-400 text-yellow-900 scale-105 border-yellow-600'
+                    : workspaces.length > 1
+                      ? 'bg-amber-400 text-amber-900 hover:bg-amber-300 border-amber-600'
+                      : 'bg-blue-400 text-blue-900 hover:bg-blue-300 border-blue-600'
+                }`}
+                onMouseDown={handleWorkspaceBadgeMouseDown}
+                onMouseUp={handleWorkspaceBadgeMouseUp}
+                onMouseLeave={handleWorkspaceBadgeMouseUp}
+                onTouchStart={handleWorkspaceBadgeTouchStart}
+                onTouchEnd={handleWorkspaceBadgeTouchEnd}
+                title="Hold for 0.5s to switch inspection month"
+              >
+                <div className="flex items-center gap-2">
+                  <Calendar size={18} />
+                  <span>{getCurrentWorkspace()?.label || 'Loading...'}</span>
+                  {workspaces.length > 1 && (
+                    <span className="text-sm bg-white bg-opacity-50 px-2 py-0.5 rounded">
+                      {workspaces.length} months
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-gray-400">Logged in as:</span>
@@ -1559,13 +1880,38 @@ function App() {
         {showMenu && (
           <div className="bg-white p-4 rounded-lg shadow-lg mb-6">
             <div className="space-y-2">
+              {/* Workspace Management */}
+              <div className="mb-4">
+                <p className="text-sm text-gray-600 mb-2 font-medium">Inspection Months</p>
+                {getCurrentWorkspace() && (
+                  <div className="text-xs text-gray-500 mb-2">
+                    Current: <strong>{getCurrentWorkspace().label}</strong>
+                    {workspaces.length > 1 && ` (${workspaces.length} active)`}
+                  </div>
+                )}
+              </div>
               <button
-                onClick={resetMonthlyStatus}
+                onClick={() => {
+                  setShowCreateWorkspace(true);
+                  setShowMenu(false);
+                }}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition w-full"
               >
-                <RotateCcw size={20} />
-                Start New Monthly Cycle
+                <Plus size={20} />
+                New Inspection Month
               </button>
+              {workspaces.length > 1 && (
+                <button
+                  onClick={() => {
+                    setShowWorkspaceSwitcher(true);
+                    setShowMenu(false);
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 bg-amber-500 text-white rounded hover:bg-amber-600 transition w-full"
+                >
+                  <Calendar size={20} />
+                  Switch Inspection Month
+                </button>
+              )}
 
               {adminMode && (
                 <>
@@ -2594,6 +2940,159 @@ function App() {
                   Cancel
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Workspace Switcher Modal */}
+      {showWorkspaceSwitcher && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">Select Inspection Month</h3>
+              <button onClick={() => setShowWorkspaceSwitcher(false)}>
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {workspaces.map(workspace => {
+                const isCurrentMonth = workspace.monthYear === `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+                const isCurrent = workspace.id === currentWorkspaceId;
+
+                return (
+                  <div
+                    key={workspace.id}
+                    onClick={() => switchWorkspace(workspace.id)}
+                    className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                      isCurrent
+                        ? 'border-blue-500 bg-blue-50'
+                        : 'border-gray-200 hover:border-gray-400 hover:bg-gray-50'
+                    }`}
+                  >
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <Calendar size={20} className={isCurrent ? 'text-blue-600' : 'text-gray-500'} />
+                        <span className="font-semibold">{workspace.label}</span>
+                        {isCurrent && (
+                          <span className="text-xs bg-blue-500 text-white px-2 py-0.5 rounded">Active</span>
+                        )}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        {(() => {
+                          // Calculate stats for this workspace - need to fetch or use cached
+                          const wsStats = getWorkspaceStats(
+                            isCurrent ? extinguishers : []
+                          );
+                          return isCurrent ? `${wsStats.total - wsStats.pending}/${wsStats.total}` : '';
+                        })()}
+                      </div>
+                    </div>
+                    {!isCurrentMonth && (
+                      <div className="mt-1 text-xs text-amber-600 flex items-center gap-1">
+                        <span>Behind schedule</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              <div className="border-t pt-4 mt-4 space-y-2">
+                <button
+                  onClick={() => {
+                    setShowWorkspaceSwitcher(false);
+                    setShowCreateWorkspace(true);
+                  }}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 transition"
+                >
+                  <Plus size={20} />
+                  New Inspection Month
+                </button>
+
+                {workspaces.length > 0 && getCurrentWorkspace() && (
+                  <button
+                    onClick={() => {
+                      const ws = getCurrentWorkspace();
+                      if (window.confirm(`Archive "${ws.label}" inspection?\n\nThis will save all inspection results and remove it from your active workspaces.`)) {
+                        archiveWorkspace(ws.id);
+                        setShowWorkspaceSwitcher(false);
+                      }
+                    }}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition"
+                  >
+                    <Download size={20} />
+                    Archive Current Month
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Workspace Modal */}
+      {showCreateWorkspace && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">New Inspection Month</h3>
+              <button onClick={() => setShowCreateWorkspace(false)}>
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Month Suggestions */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select month label:
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {(() => {
+                    const now = new Date();
+                    const suggestions = [];
+                    for (let i = 0; i < 4; i++) {
+                      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+                      const label = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }).replace(' ', " '");
+                      suggestions.push(label);
+                    }
+                    return suggestions.map(label => (
+                      <button
+                        key={label}
+                        onClick={() => {
+                          const copyFromId = workspaces.length > 0 ? workspaces[0].id : null;
+                          if (copyFromId) {
+                            if (window.confirm(`Copy extinguisher list from "${workspaces[0].label}"?\n\nAll items will start as pending.`)) {
+                              createWorkspace(label, copyFromId);
+                            } else {
+                              createWorkspace(label, null);
+                            }
+                          } else {
+                            createWorkspace(label, null);
+                          }
+                        }}
+                        className="px-4 py-3 border-2 border-gray-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition text-center font-medium"
+                      >
+                        {label}
+                      </button>
+                    ));
+                  })()}
+                </div>
+              </div>
+
+              {workspaces.length > 0 && (
+                <div className="text-sm text-gray-500 bg-gray-50 p-3 rounded-lg">
+                  <strong>Tip:</strong> When you select a month, you'll be asked if you want to copy your extinguisher list from the current workspace.
+                </div>
+              )}
+
+              <button
+                onClick={() => setShowCreateWorkspace(false)}
+                className="w-full px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400 transition"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>

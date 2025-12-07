@@ -1,0 +1,8 @@
+node_modules
+dist
+firebase-tracker-*
+firebase-tracker-deploy
+.vscode
+.idea
+*.min.js
+

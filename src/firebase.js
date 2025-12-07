@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore';
+import { getFirestore, enableIndexedDbPersistence, collection } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import { getAuth } from 'firebase/auth';
 import { getAnalytics } from 'firebase/analytics';
@@ -34,5 +34,8 @@ try {
 }
 export const auth = getAuth(app);
 export const analytics = getAnalytics(app);
+
+// Collection references
+export const workspacesRef = collection(db, 'workspaces');
 
 export default app;
