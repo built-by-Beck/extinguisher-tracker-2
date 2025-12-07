@@ -1,10 +1,10 @@
 # Fire Extinguisher Tracker
 
-A comprehensive web application for managing and tracking fire extinguisher inspections. Built with React and Firebase, this tool streamlines the monthly inspection workflow with barcode scanning, GPS location tracking, photo management, detailed checklists, and time tracking capabilities.
+A comprehensive web application for managing and tracking fire extinguisher inspections. Built with React and Firebase, this tool streamlines the monthly inspection workflow with barcode scanning, GPS location tracking, photo management, detailed checklists, multi-month workspace support, and time tracking capabilities.
 
 ## Overview
 
-The Fire Extinguisher Tracker is a full-featured inspection management system that enables hospital maintenance staff to efficiently conduct monthly fire extinguisher inspections across multiple hospital sections. The application provides user authentication, cloud data storage, comprehensive inspection checklists, photo and GPS capture, historical tracking, and powerful reporting capabilities for compliance and maintenance workflows.
+The Fire Extinguisher Tracker is a full-featured inspection management system that enables hospital maintenance staff to efficiently conduct monthly fire extinguisher inspections across multiple hospital sections. The application provides user authentication, cloud data storage, comprehensive inspection checklists, photo and GPS capture, historical tracking, multi-month workspace management, and powerful reporting capabilities for compliance and maintenance workflows.
 
 ## Key Features
 
@@ -14,6 +14,16 @@ The Fire Extinguisher Tracker is a full-featured inspection management system th
 - **User-specific data**: Each user has their own isolated dataset
 - **Firebase Storage**: Cloud storage for inspection photos (up to 5 per asset)
 - **Real-time updates**: Changes sync instantly across all sessions
+
+### 📅 Multi-Month Workspace System
+- **Separate inspection cycles**: Each month is its own workspace with independent data
+- **Quick workspace switching**: Long-press the month badge in header to switch months
+- **Create new inspection months**: Start fresh cycles with one click
+- **Copy extinguisher lists**: Option to copy asset list from previous month (all reset to pending)
+- **Workspace archiving**: Archive completed months with full inspection logs
+- **Automatic migration**: Legacy data automatically migrates to workspace system
+- **Per-workspace time tracking**: Timer data scoped to each inspection month
+- **Visual month badge**: Always shows current inspection month in header
 
 ### 📋 Advanced Inspection Management
 - **Detailed 13-point checklist** covering all NFPA compliance requirements:
@@ -48,7 +58,7 @@ The Fire Extinguisher Tracker is a full-featured inspection management system th
 
 ### 📍 GPS Location Tracking
 - **Capture GPS coordinates** for assets and inspections
-- **Accuracy tracking**: Shows GPS precision (±meters)
+- **Accuracy tracking**: Shows GPS precision (plus/minus meters)
 - **Google Maps integration**: "Open in Maps" links for navigation
 - **Asset location**: Store permanent GPS coordinates for each asset
 - **Inspection location**: Track where each inspection was performed
@@ -66,14 +76,16 @@ The Fire Extinguisher Tracker is a full-featured inspection management system th
 - **"All Sections" view** for searching across entire inventory
 - **Per-section statistics**: Pending, passed, and failed counts
 - **Smart sorting**: Automatic organization by floor and room number for efficient walking routes
+- **Section notes**: Add persistent notes per section (stored in Firestore)
 
 ### ⏱️ Time Tracking System
 - **Per-section timers** with start/pause/stop controls
 - **Real-time display** showing hours, minutes, and seconds
-- **Persistent storage**: Timer data saved across sessions
+- **Persistent storage**: Timer data saved per workspace
 - **Section time summary** modal with complete breakdown
 - **Export time data** to Excel with calculated metrics
 - **Clear individual or all times**: Easy reset for new inspection cycles
+- **Workspace-scoped**: Each inspection month has its own time tracking data
 
 ### 📱 Dual Barcode Scanning
 - **Camera-based scanning**: Uses device camera with BarcodeDetector API
@@ -82,6 +94,13 @@ The Fire Extinguisher Tracker is a full-featured inspection management system th
 - **Instant asset lookup**: Immediate navigation to scanned extinguisher
 - **Search by Asset ID or Serial Number**: Flexible matching
 - **Real-time feedback**: Visual and audio confirmation of successful scans
+
+### 🧮 Embedded Calculator
+- **External calculator integration**: Embed your fire extinguisher calculator app via iframe
+- **Configurable URL**: Set `VITE_CALCULATOR_URL` in environment variables
+- **Quick access**: Calculator button in header for easy access
+- **Open in new tab**: Option to open calculator in separate window
+- **Seamless integration**: Works within the app interface
 
 ### 📊 Comprehensive Data Management
 - **Excel/CSV Import**: Bulk upload with automatic section assignment
@@ -92,14 +111,16 @@ The Fire Extinguisher Tracker is a full-featured inspection management system th
   - **Failed items only**: Maintenance work orders
   - **Time tracking report**: Labor hours by section with item counts
 - **Checklist data in exports**: Full pass/fail status for each inspection point
-- **Monthly cycle reset**: Archive current month and start fresh with one click
+- **Database backup (JSON)**: Full export/import of all collections
+- **Database export (CSV)**: Importer-friendly format for data migration
 
 ### 🔄 Monthly Inspection Cycle Management
-- **Start new monthly cycle**: Reset all extinguishers to "pending" status
-- **Historical logging**: Save previous month's results to inspection logs
-- **Inspection history preservation**: All past inspections remain accessible
-- **Confirmation dialogs**: Prevent accidental resets
-- **Status summary**: Shows counts before reset for verification
+- **Multi-month workspaces**: Maintain separate data for each inspection month
+- **Create new months**: Start fresh with optional copy from previous month
+- **Archive completed months**: Save inspection results and remove from active list
+- **Historical logging**: All archived months saved to inspection logs
+- **Inspection history preservation**: All past inspections remain accessible per asset
+- **Workspace switching**: Easily navigate between active inspection months
 
 ### 🎯 Smart Filtering & Sorting
 - **Real-time search**: Filter by Asset ID, Serial Number, Vicinity, or Location
@@ -125,13 +146,24 @@ The Fire Extinguisher Tracker is a full-featured inspection management system th
 - **Visual progress tracking**: Color-coded status indicators
 - **Time tracking display**: Active timer and accumulated time per section
 - **Completion percentage**: Automatic calculation of inspection progress
+- **Workspace indicator**: Current inspection month always visible
 
 ### 💾 Data Persistence
 - **Firebase Firestore**: Primary cloud database storage
 - **Real-time sync**: Automatic data synchronization via onSnapshot listeners
 - **User isolation**: Data scoped by Firebase user ID
+- **Workspace isolation**: Data scoped by workspace/month
 - **Session state**: UI preferences saved to localStorage
 - **Offline support**: Local timer data with cloud sync capability
+
+### 🌐 Marketing Website
+- **Landing page**: Public homepage with feature highlights
+- **Features page**: Detailed feature descriptions
+- **Pricing page**: Plan information and pricing details
+- **About page**: Company and developer information
+- **Terms of Service**: Legal terms and conditions
+- **Privacy Policy**: Data handling and privacy information
+- **Google AdSense integration**: Monetization on public pages
 
 ## Technology Stack
 
@@ -144,11 +176,24 @@ The Fire Extinguisher Tracker is a full-featured inspection management system th
 - **State Management**: React hooks with Firestore real-time listeners
 - **Barcode Scanning**: Native BarcodeDetector API with polyfill fallback
 - **Geolocation**: Native browser Geolocation API with high accuracy mode
+- **Advertising**: Google AdSense for marketing pages
 
 ## Data Structure
 
-Each fire extinguisher record contains:
+### Workspace Record
+```javascript
+{
+  id: "firestore-document-id",
+  userId: "firebase-user-uid",
+  label: "Dec '24",
+  monthYear: "2024-12",
+  status: "active" | "archived",
+  createdAt: "2024-12-01T00:00:00Z",
+  archivedAt: null | "2025-01-01T00:00:00Z"
+}
+```
 
+### Fire Extinguisher Record
 ```javascript
 {
   id: "firestore-document-id",
@@ -161,6 +206,7 @@ Each fire extinguisher record contains:
   checkedDate: "2025-10-10T14:30:00Z",
   notes: "Pressure gauge in green zone",
   userId: "firebase-user-uid",
+  workspaceId: "workspace-document-id",
   createdAt: "2025-10-01T08:00:00Z",
 
   // Photo management (up to 5 photos)
@@ -270,12 +316,30 @@ npm install
    export const storage = getStorage(app);
    ```
 
-4. **Configure Firestore Security Rules**:
+4. **Configure Environment Variables** (optional):
+   Create a `.env.local` file:
+   ```bash
+   # External calculator app URL (optional)
+   VITE_CALCULATOR_URL=https://your-calc-app.web.app
+
+   # Google AdSense Publisher ID (optional, for marketing pages)
+   VITE_ADSENSE_PUBLISHER_ID=ca-pub-XXXXXXXXXX
+   ```
+
+5. **Configure Firestore Security Rules**:
    ```javascript
    rules_version = '2';
    service cloud.firestore {
      match /databases/{database}/documents {
        match /extinguishers/{docId} {
+         allow read, write: if request.auth != null &&
+                            request.resource.data.userId == request.auth.uid;
+       }
+       match /workspaces/{docId} {
+         allow read, write: if request.auth != null &&
+                            request.resource.data.userId == request.auth.uid;
+       }
+       match /sectionNotes/{docId} {
          allow read, write: if request.auth != null &&
                             request.resource.data.userId == request.auth.uid;
        }
@@ -286,7 +350,7 @@ npm install
    }
    ```
 
-5. **Configure Storage Security Rules**:
+6. **Configure Storage Security Rules**:
    ```javascript
    rules_version = '2';
    service firebase.storage {
@@ -301,24 +365,33 @@ npm install
    }
    ```
 
-6. Start development server:
+7. Start development server:
 ```bash
 npm run dev
 ```
 
-7. Open your browser to `http://localhost:5173`
+8. Open your browser to `http://localhost:5173`
 
-8. **Create user account**: Use the login screen to register a new account
+9. **Create user account**: Use the login screen to register a new account
 
 ## Usage
 
 ### First-Time Setup
 
 1. **Login/Register**: Create an account or login with existing credentials
-2. **Enable Admin Mode**: Click the settings icon to toggle admin mode
-3. **Import Initial Data**: Click menu → "Import Data File (By Section)"
-4. **Select Section**: Choose which hospital section the data belongs to
-5. **Upload File**: Select your Excel/CSV file with asset data
+2. **Automatic Workspace Creation**: Your first workspace is created automatically
+3. **Enable Admin Mode**: Click the settings icon to toggle admin mode
+4. **Import Initial Data**: Click menu -> "Import Data File (By Section)"
+5. **Select Section**: Choose which hospital section the data belongs to
+6. **Upload File**: Select your Excel/CSV file with asset data
+
+### Managing Inspection Months (Workspaces)
+
+1. **View Current Month**: The month badge in the header shows your active workspace
+2. **Switch Months**: Long-press (hold 0.5s) the month badge to open workspace switcher
+3. **Create New Month**: Menu -> "New Inspection Month" or from workspace switcher
+4. **Copy Assets**: When creating a new month, optionally copy asset list from previous month
+5. **Archive Completed Months**: From workspace switcher, archive finished inspection cycles
 
 ### Starting a Monthly Inspection Cycle
 
@@ -344,7 +417,7 @@ npm run dev
 
 5. **Capture GPS** (optional):
    - Click "Capture GPS" for precise location coordinates
-   - View accuracy rating (±meters)
+   - View accuracy rating (plus/minus meters)
    - Click "Open in Maps" to verify location
 
 6. **Complete 13-Point Checklist**:
@@ -372,6 +445,7 @@ npm run dev
 2. **Pause/Resume Timer**: Use pause button for breaks
 3. **Switch Views**: Toggle between "Unchecked" and "Checked" items
 4. **View Checked Items**: Review completed inspections
+5. **Section Notes**: Add notes for the section (persists across sessions)
 
 ### Managing Assets
 
@@ -388,78 +462,105 @@ npm run dev
 
 3. **Add New Asset** (admin only):
    - Enable admin mode
-   - Click menu → "Add New Fire Extinguisher"
+   - Click menu -> "Add New Fire Extinguisher"
    - Fill in Asset ID (required), Serial, Vicinity, Parent Location
    - Select Section
    - Optionally add photo and GPS
    - Click "Add Fire Extinguisher"
 
+### Using the Calculator
+
+1. **Open Calculator**: Click the calculator button in the header
+2. **Configure URL**: Set `VITE_CALCULATOR_URL` in your environment variables
+3. **Embedded View**: Calculator displays within the app via iframe
+4. **New Tab Option**: Click "Open in new tab" for full-screen access
+
 ### Completing a Section
 
 1. **Stop Timer**: Click "Stop Timer" when section is complete
 2. **Review Failed Items**: Toggle to "Checked" view, filter by status
-3. **Export Failed Items**: Menu → "Export Failed Only" for work orders
+3. **Export Failed Items**: Menu -> "Export Failed Only" for work orders
 4. **Move to Next Section**: Select another section tab
 
 ### End of Month Reporting
 
-1. **View Time Tracking**: Click "View All Times" or menu → time summary
+1. **View Time Tracking**: Click "View All Times" or menu -> time summary
 2. **Export Reports**:
    - **Export All Data**: Complete inventory with checklist details
    - **Export Passed Only**: Compliance report
    - **Export Failed Only**: Maintenance work orders
    - **Export Time Data**: Labor hours by section
 
-3. **Start New Monthly Cycle**:
-   - Click menu → "Start New Monthly Cycle"
-   - Review confirmation dialog (shows current month stats)
-   - Confirm to reset all statuses to "pending"
-   - Previous month data saved to inspection logs
+3. **Archive Current Month**:
+   - Open workspace switcher (long-press month badge)
+   - Click "Archive Current Month"
+   - Inspection log saved automatically
+   - Create new month for next cycle
 
-### Monthly Reset Process
+### Database Backup (JSON)
 
-The monthly reset:
-- ✅ Resets all extinguisher statuses to "pending"
-- ✅ Preserves all inspection history on each asset
-- ✅ Creates inspection log snapshot of current month
-- ✅ Clears current month checklist data
-- ✅ Keeps all photos and GPS locations
-- ✅ Maintains asset details (ID, Serial, Location, Section)
+- **Export full database**: Menu -> Admin -> "Export Database (JSON)"
+  - Includes `extinguishers`, `sectionNotes`, and `inspectionLogs` collections
+  - Saves a timestamped `.json` file as backup
+- **Import backup**: Menu -> Admin -> "Import Database (JSON)"
+  - Replaces current data with backup contents (confirms before proceeding)
+  - Photos referenced by URLs remain in Firebase Storage
+
+### Database Export (CSV)
+
+- **Export importer-friendly CSV**: Menu -> Admin -> "Export Database (CSV)"
+  - Columns: Asset ID, Serial, Vicinity, Parent Location, Section
+  - This CSV can be imported directly using "Import Data File"
 
 ## Development
 
 ### Available Commands
 
-- `npm run dev` — Start Vite development server with React Fast Refresh
-- `npm run build` — Create production build in `dist/` directory
-- `npm run preview` — Serve the built `dist/` locally for verification
-- `npm run lint` — Run ESLint across source files (zero warnings policy)
+- `npm run dev` - Start Vite development server with React Fast Refresh
+- `npm run build` - Create production build in `dist/` directory
+- `npm run preview` - Serve the built `dist/` locally for verification
+- `npm run lint` - Run ESLint across source files (zero warnings policy)
 
 ### Code Organization
 
 ```
 src/
 ├── App.jsx                     # Main application component and business logic
-├── main.jsx                    # React entry point with Router
+├── main.jsx                    # React entry point
+├── Router.jsx                  # Route definitions (marketing + app)
 ├── index.css                   # Tailwind CSS configuration
 ├── firebase.js                 # Firebase configuration (Auth, Firestore, Storage)
 ├── Login.jsx                   # Authentication UI component
-└── components/
-    ├── BarcodeScanner.jsx      # Camera-based barcode scanning component
-    ├── SectionGrid.jsx         # Section overview grid (home page)
-    └── SectionDetail.jsx       # Section detail view with checklist modal
+├── components/
+│   ├── BarcodeScanner.jsx      # Camera-based barcode scanning
+│   ├── SectionGrid.jsx         # Section overview grid (home page)
+│   ├── SectionDetail.jsx       # Section detail view with checklist modal
+│   ├── ExtinguisherDetailView.jsx  # Individual asset detail view
+│   ├── Calculator.jsx          # External calculator iframe wrapper
+│   └── AdSense.jsx             # Google AdSense ad component
+└── pages/
+    ├── LandingPage.jsx         # Public homepage
+    ├── FeaturesPage.jsx        # Feature descriptions
+    ├── PricingPage.jsx         # Pricing information
+    ├── AboutPage.jsx           # About page
+    ├── TermsPage.jsx           # Terms of service
+    └── PrivacyPage.jsx         # Privacy policy
 ```
 
 ### Firebase Collections
 
-- **`extinguishers`** — Fire extinguisher assets (scoped by `userId`)
-- **`inspectionLogs`** — Monthly inspection cycle snapshots
+- **`extinguishers`** - Fire extinguisher assets (scoped by `userId` and `workspaceId`)
+- **`workspaces`** - Inspection month/cycle definitions (scoped by `userId`)
+- **`sectionNotes`** - Per-section notes (scoped by `userId`)
+- **`inspectionLogs`** - Archived monthly inspection cycle snapshots
 
 ### localStorage Keys
 
-- `sessionState_{userId}` — Current filters and UI state per user
-- `sectionTimes_{userId}` — Time tracking data per section per user
-- `sectionView_{section}` — View mode preference per section (unchecked/checked)
+- `currentWorkspace_{userId}` - Currently selected workspace ID
+- `sessionState_{userId}` - Current filters and UI state per user
+- `sectionTimes_{userId}_{workspaceId}` - Time tracking data per workspace
+- `sectionView_{section}` - View mode preference per section (unchecked/checked)
+- `inspectionLogs_{userId}` - Fallback storage for inspection logs
 
 ### Photo Storage Structure
 
@@ -484,36 +585,40 @@ firebase-storage/
 
 ## Feature Highlights
 
-### 🎯 What Makes This App Special
+### What Makes This App Special
 
-1. **Complete Offline Capability**: All timer data stored locally; works even when internet drops
-2. **13-Point NFPA Compliance Checklist**: Automated compliance tracking for fire code requirements
-3. **Smart Walking Routes**: Automatic sorting by floor and room number for efficient inspections
-4. **Photo Management**: Up to 5 reference photos per asset plus inspection photos
-5. **GPS Precision**: Track exact asset locations with accuracy ratings
-6. **Firebase Real-time Sync**: Changes instantly appear across all logged-in devices
-7. **Monthly Audit Trail**: Complete historical logging of inspection cycles
-8. **Dual Scanning Modes**: Both camera-based and handheld scanner support
-9. **Time Tracking**: Accurate labor reporting by hospital section
-10. **Admin Safeguards**: Protected controls prevent accidental data loss
+1. **Multi-Month Workspaces**: Maintain separate inspection cycles with easy switching
+2. **Complete Offline Capability**: Timer data stored locally; works when internet drops
+3. **13-Point NFPA Compliance Checklist**: Automated compliance tracking for fire code
+4. **Smart Walking Routes**: Automatic sorting by floor and room number
+5. **Photo Management**: Up to 5 reference photos per asset plus inspection photos
+6. **GPS Precision**: Track exact asset locations with accuracy ratings
+7. **Firebase Real-time Sync**: Changes instantly appear across all logged-in devices
+8. **Monthly Audit Trail**: Complete historical logging of inspection cycles
+9. **Dual Scanning Modes**: Both camera-based and handheld scanner support
+10. **Time Tracking**: Accurate labor reporting by hospital section
+11. **Admin Safeguards**: Protected controls prevent accidental data loss
+12. **Embedded Calculator**: Quick access to external calculation tools
 
-### 📱 Mobile-First Design
+### Mobile-First Design
 
 - Fully responsive interface works on phones, tablets, and desktops
 - Touch-optimized buttons and controls
+- Long-press gestures for quick workspace switching
 - Camera integration for photo capture and barcode scanning
 - GPS location services for asset mapping
 - Works great on hospital Wi-Fi or cellular data
 
-### 🔒 Security Features
+### Security Features
 
 - Firebase Authentication with email/password
 - User-scoped data (users only see their own data)
+- Workspace-scoped data isolation
 - Firestore security rules enforce user isolation
 - Storage security rules protect uploaded photos
 - Admin mode toggle for sensitive operations
 
-### 🚀 Performance
+### Performance
 
 - React 18 with Fast Refresh for instant development updates
 - Vite build system for lightning-fast builds
@@ -553,6 +658,11 @@ firebase-storage/
 - **Check for special characters**: Some characters may cause parsing issues
 - **Try smaller batches**: Import in chunks if file is very large
 
+### Workspace Issues
+- **Missing workspaces**: Legacy data auto-migrates on first login
+- **Can't switch months**: Long-press the month badge for 0.5 seconds
+- **Lost data**: Check you're viewing the correct workspace/month
+
 ## Roadmap
 
 Future enhancements under consideration:
@@ -570,7 +680,7 @@ Future enhancements under consideration:
 
 ## License
 
-Copyright © 2025 David Beck (built_by_Beck). All rights reserved.
+Copyright 2025 David Beck (built_by_Beck). All rights reserved.
 
 This software is proprietary and confidential. See LICENSE file for details.
 
@@ -584,17 +694,3 @@ For questions, support, or licensing inquiries, please contact the developer.
 ---
 
 Built with React + Vite + Firebase | Cloud-First with Offline Support
-### Database Backup (JSON)
-
-- Export full database: Menu → Admin → "Export Database (JSON)".
-  - Includes your `extinguishers`, `sectionNotes`, and `inspectionLogs` collections (scoped to your user).
-  - Saves a timestamped `.json` file you can store as a backup.
-- Import backup: Menu → Admin → "Import Database (JSON)" and select a previously exported file.
-  - Replaces your current data with the backup contents (confirms before proceeding).
-  - Photos referenced by URLs remain in Firebase Storage; importing does not re-upload images.
-
-### Database Export (CSV)
-
-- Export importer-friendly CSV: Menu → Admin → "Export Database (CSV)".
-  - Columns: Asset ID, Serial, Vicinity, Parent Location, Section
-  - This CSV can be imported directly using "Import Data File".
