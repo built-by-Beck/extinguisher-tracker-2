@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate, Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
-import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon } from 'lucide-react';
+import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce, writeBatch } from 'firebase/firestore';
 import { auth, db, storage, workspacesRef } from './firebase';
@@ -89,9 +89,19 @@ function App() {
   const [workspaceLongPressTimer, setWorkspaceLongPressTimer] = useState(null);
   const [workspaceBadgePressing, setWorkspaceBadgePressing] = useState(false);
 
+  // Auto-backup state
+  const [lastAutoBackup, setLastAutoBackup] = useState(null);
+  const [showBackupModal, setShowBackupModal] = useState(false);
+  const [availableBackups, setAvailableBackups] = useState([]);
+
+  // Device sync state
+  const [showSyncModal, setShowSyncModal] = useState(false);
+  const [syncImporting, setSyncImporting] = useState(false);
+
   const scanInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const dbBackupInputRef = useRef(null);
+  const syncFileInputRef = useRef(null);
   const timerIntervalRef = useRef(null);
 
   // Authentication listener
@@ -111,6 +121,10 @@ function App() {
       return;
     }
 
+    console.log('=== FIREBASE DEBUG ===');
+    console.log('User UID:', user.uid);
+    console.log('User Email:', user.email);
+
     // Load workspaces from Firestore
     const workspacesQuery = query(
       collection(db, 'workspaces'),
@@ -119,10 +133,12 @@ function App() {
     );
 
     const unsubscribeWorkspaces = onSnapshot(workspacesQuery, async (snapshot) => {
+      console.log('Workspaces snapshot received:', snapshot.docs.length, 'workspaces');
       const workspaceData = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
+      console.log('Workspace data:', JSON.stringify(workspaceData, null, 2));
       setWorkspaces(workspaceData);
 
       // If no workspaces exist, we need to migrate existing data
@@ -186,21 +202,27 @@ function App() {
     return () => unsubscribeWorkspaces();
   }, [user]);
 
-  // Load extinguishers filtered by current workspace
+  // Load extinguishers filtered by current workspace (or all if no workspace)
   useEffect(() => {
-    if (!user || !currentWorkspaceId) {
+    if (!user) {
       setExtinguishers([]);
       return;
     }
 
-    // Load extinguishers from Firestore filtered by workspace
-    const extinguishersQuery = query(
-      collection(db, 'extinguishers'),
-      where('userId', '==', user.uid),
-      where('workspaceId', '==', currentWorkspaceId)
-    );
+    // Load extinguishers from Firestore - filter by workspace if available, otherwise load all
+    const extinguishersQuery = currentWorkspaceId
+      ? query(
+          collection(db, 'extinguishers'),
+          where('userId', '==', user.uid),
+          where('workspaceId', '==', currentWorkspaceId)
+        )
+      : query(
+          collection(db, 'extinguishers'),
+          where('userId', '==', user.uid)
+        );
 
     const unsubscribeExtinguishers = onSnapshot(extinguishersQuery, (snapshot) => {
+      console.log('Extinguishers snapshot received:', snapshot.docs.length, 'items for workspace:', currentWorkspaceId);
       const extinguisherData = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
@@ -770,6 +792,306 @@ function App() {
     }
   };
 
+  // ============ AUTO-BACKUP SYSTEM ============
+  // Save automatic backup to localStorage (keeps last 7 days)
+  const performAutoBackup = async () => {
+    if (!user || extinguishers.length === 0) return null;
+
+    try {
+      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+      const backupKey = `autoBackup_${user.uid}_${today}`;
+
+      // Check if we already backed up today
+      const existingBackup = localStorage.getItem(backupKey);
+      if (existingBackup) {
+        // Update the existing backup with latest data
+        const parsed = JSON.parse(existingBackup);
+        if (parsed.extinguishers?.length >= extinguishers.length) {
+          // Don't overwrite if existing backup has same or more data (safety check)
+          setLastAutoBackup(new Date(parsed.backupTime));
+          return parsed;
+        }
+      }
+
+      const backup = {
+        version: 1,
+        backupTime: new Date().toISOString(),
+        date: today,
+        userId: user.uid,
+        workspaceId: currentWorkspaceId,
+        extinguishers: extinguishers.map(e => ({ ...e })),
+        sectionTimes: { ...sectionTimes },
+        totalItems: extinguishers.length,
+        passedItems: extinguishers.filter(e => e.status === 'pass').length,
+        failedItems: extinguishers.filter(e => e.status === 'fail').length
+      };
+
+      localStorage.setItem(backupKey, JSON.stringify(backup));
+      setLastAutoBackup(new Date());
+
+      // Clean up old backups (keep last 7 days)
+      cleanupOldBackups();
+
+      console.log(`Auto-backup saved: ${backup.totalItems} items on ${today}`);
+      return backup;
+    } catch (err) {
+      console.error('Auto-backup failed:', err);
+      return null;
+    }
+  };
+
+  // Remove backups older than 7 days
+  const cleanupOldBackups = () => {
+    if (!user) return;
+
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - 7);
+
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(`autoBackup_${user.uid}_`)) {
+        const dateStr = key.split('_').pop(); // YYYY-MM-DD
+        const backupDate = new Date(dateStr);
+        if (backupDate < cutoffDate) {
+          keysToRemove.push(key);
+        }
+      }
+    }
+
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+    if (keysToRemove.length > 0) {
+      console.log(`Cleaned up ${keysToRemove.length} old backups`);
+    }
+  };
+
+  // Get list of available backups
+  const getAvailableBackups = () => {
+    if (!user) return [];
+
+    const backups = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(`autoBackup_${user.uid}_`)) {
+        try {
+          const data = JSON.parse(localStorage.getItem(key));
+          backups.push({
+            key,
+            date: data.date,
+            backupTime: data.backupTime,
+            totalItems: data.totalItems,
+            passedItems: data.passedItems,
+            failedItems: data.failedItems,
+            workspaceId: data.workspaceId
+          });
+        } catch (e) {
+          console.warn('Invalid backup data:', key);
+        }
+      }
+    }
+
+    // Sort by date descending (newest first)
+    return backups.sort((a, b) => new Date(b.backupTime) - new Date(a.backupTime));
+  };
+
+  // Restore from a local backup
+  const restoreFromBackup = async (backupKey) => {
+    if (!user) return;
+
+    try {
+      const backupData = localStorage.getItem(backupKey);
+      if (!backupData) {
+        alert('Backup not found.');
+        return;
+      }
+
+      const backup = JSON.parse(backupData);
+
+      const confirmRestore = window.confirm(
+        `⚠️ RESTORE BACKUP\n\n` +
+        `This will replace ALL current data with the backup from:\n` +
+        `${new Date(backup.backupTime).toLocaleString()}\n\n` +
+        `Backup contains:\n` +
+        `• ${backup.totalItems} extinguishers\n` +
+        `• ${backup.passedItems} passed\n` +
+        `• ${backup.failedItems} failed\n\n` +
+        `Current data will be OVERWRITTEN. Continue?`
+      );
+
+      if (!confirmRestore) return;
+
+      // Double confirmation for safety
+      const doubleConfirm = window.confirm(
+        `🔴 FINAL WARNING\n\n` +
+        `You are about to restore data from ${backup.date}.\n` +
+        `This action CANNOT be undone.\n\n` +
+        `Are you absolutely sure?`
+      );
+
+      if (!doubleConfirm) return;
+
+      // First, create an emergency backup of current state
+      const emergencyKey = `emergencyBackup_${user.uid}_${Date.now()}`;
+      const emergencyBackup = {
+        backupTime: new Date().toISOString(),
+        reason: 'Pre-restore emergency backup',
+        extinguishers: extinguishers.map(e => ({ ...e })),
+        totalItems: extinguishers.length
+      };
+      localStorage.setItem(emergencyKey, JSON.stringify(emergencyBackup));
+
+      // Delete existing Firestore documents
+      const existingSnap = await getDocs(query(collection(db, 'extinguishers'), where('userId', '==', user.uid)));
+      const batch = writeBatch(db);
+      existingSnap.docs.forEach(docSnap => {
+        batch.delete(doc(db, 'extinguishers', docSnap.id));
+      });
+      await batch.commit();
+
+      // Restore from backup
+      for (const item of backup.extinguishers) {
+        const { id, ...rest } = item;
+        await addDoc(collection(db, 'extinguishers'), {
+          ...rest,
+          userId: user.uid,
+          restoredFrom: backupKey,
+          restoredAt: new Date().toISOString()
+        });
+      }
+
+      // Restore section times
+      if (backup.sectionTimes && currentWorkspaceId) {
+        localStorage.setItem(`sectionTimes_${user.uid}_${currentWorkspaceId}`, JSON.stringify(backup.sectionTimes));
+        setSectionTimes(backup.sectionTimes);
+      }
+
+      alert(`✅ Restore complete!\n\n${backup.totalItems} extinguishers restored from ${backup.date}.\n\nAn emergency backup of your previous data was saved.`);
+      setShowBackupModal(false);
+    } catch (err) {
+      console.error('Restore failed:', err);
+      alert(`❌ Restore failed: ${err.message}\n\nYour current data should be unchanged.`);
+    }
+  };
+
+  // Download a backup as JSON file
+  const downloadBackup = (backupKey) => {
+    try {
+      const backupData = localStorage.getItem(backupKey);
+      if (!backupData) return;
+
+      const backup = JSON.parse(backupData);
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `FireExtinguisher_Backup_${backup.date}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Download failed:', err);
+      alert('Failed to download backup.');
+    }
+  };
+
+  // Auto-backup effect: runs when extinguishers data changes
+  useEffect(() => {
+    if (!user || extinguishers.length === 0) return;
+
+    // Check last backup time
+    const lastBackupKey = `lastAutoBackupTime_${user.uid}`;
+    const lastBackupTime = localStorage.getItem(lastBackupKey);
+    const now = new Date();
+    const today = now.toISOString().split('T')[0];
+
+    // Only auto-backup once per day (or if no backup exists)
+    if (lastBackupTime) {
+      const lastDate = lastBackupTime.split('T')[0];
+      if (lastDate === today) {
+        // Already backed up today, but update the backup with latest data
+        const backupKey = `autoBackup_${user.uid}_${today}`;
+        const existing = localStorage.getItem(backupKey);
+        if (existing) {
+          setLastAutoBackup(new Date(JSON.parse(existing).backupTime));
+        }
+        return;
+      }
+    }
+
+    // Perform auto-backup
+    performAutoBackup().then(backup => {
+      if (backup) {
+        localStorage.setItem(lastBackupKey, new Date().toISOString());
+      }
+    });
+  }, [user, extinguishers.length, currentWorkspaceId]);
+
+  // Load available backups when modal opens
+  useEffect(() => {
+    if (showBackupModal) {
+      setAvailableBackups(getAvailableBackups());
+    }
+  }, [showBackupModal, user]);
+  // ============ END AUTO-BACKUP SYSTEM ============
+
+  // ============ DATA REPAIR FUNCTION ============
+  const repairMissingWorkspaceIds = async () => {
+    if (!user || !currentWorkspaceId) {
+      alert('Please make sure you are logged in and have a workspace selected.');
+      return;
+    }
+
+    try {
+      // Find all extinguishers for this user that don't have a workspaceId
+      const allUserExtQuery = query(
+        collection(db, 'extinguishers'),
+        where('userId', '==', user.uid)
+      );
+      const allSnap = await getDocs(allUserExtQuery);
+
+      const needsRepair = allSnap.docs.filter(d => !d.data().workspaceId);
+
+      if (needsRepair.length === 0) {
+        alert('All extinguishers already have a workspaceId. No repair needed.');
+        return;
+      }
+
+      const confirm1 = window.confirm(
+        `Found ${needsRepair.length} extinguishers without a workspaceId.\n\n` +
+        `This will assign them to the current workspace: ${currentWorkspaceId}\n\n` +
+        `Continue?`
+      );
+
+      if (!confirm1) return;
+
+      // Update in batches of 500 (Firestore limit)
+      const batchSize = 500;
+      let updated = 0;
+
+      for (let i = 0; i < needsRepair.length; i += batchSize) {
+        const batch = writeBatch(db);
+        const chunk = needsRepair.slice(i, i + batchSize);
+
+        chunk.forEach(docSnap => {
+          batch.update(doc(db, 'extinguishers', docSnap.id), {
+            workspaceId: currentWorkspaceId
+          });
+        });
+
+        await batch.commit();
+        updated += chunk.length;
+        console.log(`Updated ${updated}/${needsRepair.length} extinguishers`);
+      }
+
+      alert(`SUCCESS! Repaired ${updated} extinguishers.\n\nRefresh the page to see your data.`);
+    } catch (err) {
+      console.error('Repair failed:', err);
+      alert(`Repair failed: ${err.message}`);
+    }
+  };
+  // ============ END DATA REPAIR FUNCTION ============
+
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -1221,6 +1543,132 @@ function App() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Time Tracking');
     XLSX.writeFile(wb, `${monthName}_Time_Tracking_${timestamp}_Export.xlsx`);
+  };
+
+  // Device Sync Export - exports everything needed to sync to another device
+  const exportSyncData = () => {
+    const currentWorkspace = workspaces.find(ws => ws.id === currentWorkspaceId);
+
+    const syncData = {
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      exportedFrom: user.email,
+      workspace: currentWorkspace ? {
+        label: currentWorkspace.label,
+        monthYear: currentWorkspace.monthYear,
+        status: currentWorkspace.status,
+        createdAt: currentWorkspace.createdAt
+      } : null,
+      extinguishers: extinguishers.map(e => {
+        // Remove Firestore-specific IDs, keep all inspection data
+        const { id, userId, workspaceId, ...data } = e;
+        return data;
+      }),
+      sectionNotes: sectionNotes,
+      sectionTimes: sectionTimes
+    };
+
+    const blob = new Blob([JSON.stringify(syncData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const timestamp = new Date().toISOString().split('T')[0];
+    const label = currentWorkspace?.label?.replace(/[^a-zA-Z0-9]/g, '_') || 'sync';
+    a.download = `FireExtinguisher_Sync_${label}_${timestamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    alert(`Sync file exported!\n\nTransfer this file to your other device and use "Import Sync File" to restore your data.`);
+  };
+
+  // Device Sync Import - imports sync data and replaces current workspace
+  const importSyncData = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setSyncImporting(true);
+    try {
+      const text = await file.text();
+      const syncData = JSON.parse(text);
+
+      if (!syncData.version || !syncData.extinguishers) {
+        throw new Error('Invalid sync file format');
+      }
+
+      const confirmMsg = `Import sync data from ${syncData.exportedFrom || 'unknown'}?\n\n` +
+        `Workspace: ${syncData.workspace?.label || 'Unknown'}\n` +
+        `Extinguishers: ${syncData.extinguishers.length}\n` +
+        `Exported: ${new Date(syncData.exportedAt).toLocaleString()}\n\n` +
+        `This will REPLACE all data in your current workspace.`;
+
+      if (!window.confirm(confirmMsg)) {
+        setSyncImporting(false);
+        event.target.value = '';
+        return;
+      }
+
+      // Delete existing extinguishers in current workspace
+      const existingQuery = query(
+        collection(db, 'extinguishers'),
+        where('userId', '==', user.uid),
+        where('workspaceId', '==', currentWorkspaceId)
+      );
+      const existingSnap = await getDocs(existingQuery);
+
+      // Batch delete existing
+      for (let i = 0; i < existingSnap.docs.length; i += 450) {
+        const slice = existingSnap.docs.slice(i, i + 450);
+        const batch = writeBatch(db);
+        slice.forEach(d => batch.delete(doc(db, 'extinguishers', d.id)));
+        await batch.commit();
+      }
+
+      // Import new extinguishers
+      let imported = 0;
+      for (const item of syncData.extinguishers) {
+        await addDoc(collection(db, 'extinguishers'), {
+          ...item,
+          userId: user.uid,
+          workspaceId: currentWorkspaceId,
+          importedAt: new Date().toISOString(),
+          importedFrom: syncData.exportedFrom || 'sync'
+        });
+        imported++;
+      }
+
+      // Import section notes
+      if (syncData.sectionNotes) {
+        for (const [section, noteData] of Object.entries(syncData.sectionNotes)) {
+          if (noteData?.notes) {
+            const slug = section.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+            const id = `${user.uid}__${slug}`;
+            await setDoc(doc(db, 'sectionNotes', id), {
+              userId: user.uid,
+              section: section,
+              notes: noteData.notes,
+              lastUpdated: new Date().toISOString()
+            }, { merge: true });
+          }
+        }
+      }
+
+      // Import section times to localStorage
+      if (syncData.sectionTimes) {
+        setSectionTimes(syncData.sectionTimes);
+        localStorage.setItem(`sectionTimes_${user.uid}`, JSON.stringify(syncData.sectionTimes));
+      }
+
+      alert(`Sync complete!\n\nImported ${imported} extinguishers.\n\nYour data should now match the source device.`);
+      setShowSyncModal(false);
+    } catch (error) {
+      console.error('Sync import error:', error);
+      alert(`Import failed: ${error.message}`);
+    } finally {
+      setSyncImporting(false);
+      event.target.value = '';
+    }
   };
 
   const clearAllData = async () => {
@@ -1913,6 +2361,41 @@ function App() {
                 </button>
               )}
 
+              {/* Data Protection / Backup Section */}
+              <div className="border-t pt-2 mt-4">
+                <p className="text-sm text-gray-600 mb-2 font-medium">Data Protection</p>
+                {lastAutoBackup && (
+                  <div className="text-xs text-green-600 mb-2 flex items-center gap-1">
+                    <Shield size={14} />
+                    Last backup: {lastAutoBackup.toLocaleDateString()} {lastAutoBackup.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => {
+                  setShowBackupModal(true);
+                  setShowMenu(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition w-full"
+              >
+                <Shield size={20} />
+                Backup & Restore
+              </button>
+              <button
+                onClick={async () => {
+                  const backup = await performAutoBackup();
+                  if (backup) {
+                    alert(`Backup saved!\n\n${backup.totalItems} extinguishers backed up.`);
+                  } else {
+                    alert('Backup failed or no data to backup.');
+                  }
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-teal-500 text-white rounded hover:bg-teal-600 transition w-full"
+              >
+                <History size={20} />
+                Backup Now
+              </button>
+
               {adminMode && (
                 <>
                   <div className="border-t pt-2 mt-4">
@@ -1950,6 +2433,16 @@ function App() {
                   </button>
                   <button
                     onClick={() => {
+                      repairMissingWorkspaceIds();
+                      setShowMenu(false);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition w-full"
+                  >
+                    <RotateCcw size={20} />
+                    Repair Missing WorkspaceIds
+                  </button>
+                  <button
+                    onClick={() => {
                       setShowImportModal(true);
                       setShowMenu(false);
                     }}
@@ -1969,6 +2462,30 @@ function App() {
                     Add New Fire Extinguisher
                   </button>
                 </>)}
+
+              <div className="border-t pt-2 mt-4">
+                <p className="text-sm text-gray-600 mb-2 font-medium">📱 Device Sync</p>
+              </div>
+              <button
+                onClick={() => {
+                  exportSyncData();
+                  setShowMenu(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 transition w-full"
+              >
+                <Upload size={20} />
+                Export Sync File (from this device)
+              </button>
+              <button
+                onClick={() => {
+                  setShowSyncModal(true);
+                  setShowMenu(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700 transition w-full"
+              >
+                <Download size={20} />
+                Import Sync File (to this device)
+              </button>
 
               <div className="border-t pt-2 mt-4">
                 <p className="text-sm text-gray-600 mb-2 font-medium">Export Data</p>
@@ -2587,6 +3104,36 @@ function App() {
                 <div className="font-medium text-white">{selectedItem.section}</div>
               </div>
 
+              {/* Manufacture Year / Maintenance Date */}
+              <div>
+                <div className="text-sm text-gray-400 mb-1">Mfg Year / 6-Year / Hydro Test</div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={selectedItem.manufactureYear || ''}
+                    onChange={async (e) => {
+                      const newValue = e.target.value;
+                      // Update local state immediately for responsive UI
+                      setSelectedItem({ ...selectedItem, manufactureYear: newValue });
+                    }}
+                    onBlur={async (e) => {
+                      // Save to database on blur
+                      const newValue = e.target.value.trim();
+                      try {
+                        const docRef = doc(db, 'extinguishers', selectedItem.id);
+                        await updateDoc(docRef, { manufactureYear: newValue });
+                      } catch (err) {
+                        console.error('Error saving manufacture year:', err);
+                        alert('Error saving year. Please try again.');
+                      }
+                    }}
+                    placeholder="e.g., 2019 / 6yr: 2025 / Hydro: 2025"
+                    className="flex-1 p-2 border border-gray-600 rounded-lg bg-gray-700 text-white placeholder-gray-500 focus:ring-2 focus:ring-red-500 focus:border-red-500 text-sm"
+                  />
+                </div>
+                <div className="text-xs text-gray-500 mt-1">Enter manufacture year, 6-year maintenance, or hydrostatic test dates</div>
+              </div>
+
               {/* Location chip with Open in Maps */}
               {(() => {
                 const gps = selectedItem.lastInspectionGps || selectedItem.location;
@@ -3199,6 +3746,198 @@ function App() {
                 Export will include: Basic info + your selected options above
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Backup & Restore Modal */}
+      {showBackupModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-lg p-6 max-w-lg w-full my-8">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold flex items-center gap-2">
+                <Shield className="text-green-600" size={24} />
+                Data Protection
+              </h3>
+              <button onClick={() => setShowBackupModal(false)}>
+                <X size={24} />
+              </button>
+            </div>
+
+            {/* Current Status */}
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+              <div className="flex items-center gap-2 text-green-700 font-semibold mb-1">
+                <Shield size={18} />
+                Auto-Backup Active
+              </div>
+              <p className="text-sm text-green-600">
+                Your data is automatically backed up daily to this device.
+                Backups are kept for 7 days.
+              </p>
+              {lastAutoBackup && (
+                <p className="text-sm text-green-800 mt-2">
+                  Last backup: <strong>{lastAutoBackup.toLocaleString()}</strong>
+                </p>
+              )}
+            </div>
+
+            {/* Manual Backup */}
+            <div className="mb-4">
+              <button
+                onClick={async () => {
+                  const backup = await performAutoBackup();
+                  if (backup) {
+                    setAvailableBackups(getAvailableBackups());
+                    alert(`Backup saved!\n\n${backup.totalItems} extinguishers backed up.`);
+                  }
+                }}
+                className="w-full bg-teal-500 text-white p-3 rounded-lg hover:bg-teal-600 flex items-center justify-center gap-2 font-semibold"
+              >
+                <History size={20} />
+                Create Backup Now
+              </button>
+            </div>
+
+            {/* Available Backups */}
+            <div className="border-t pt-4">
+              <h4 className="font-semibold mb-3 flex items-center gap-2">
+                <History size={18} />
+                Available Backups ({availableBackups.length})
+              </h4>
+
+              {availableBackups.length === 0 ? (
+                <p className="text-gray-500 text-sm">No backups found on this device.</p>
+              ) : (
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {availableBackups.map((backup) => (
+                    <div
+                      key={backup.key}
+                      className="bg-gray-50 border rounded-lg p-3"
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <div>
+                          <div className="font-medium">
+                            {new Date(backup.backupTime).toLocaleDateString('en-US', {
+                              weekday: 'short',
+                              month: 'short',
+                              day: 'numeric'
+                            })}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {new Date(backup.backupTime).toLocaleTimeString([], {
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </div>
+                        </div>
+                        <div className="text-right text-sm">
+                          <div className="font-medium">{backup.totalItems} items</div>
+                          <div className="text-xs">
+                            <span className="text-green-600">{backup.passedItems} pass</span>
+                            {' / '}
+                            <span className="text-red-600">{backup.failedItems} fail</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => restoreFromBackup(backup.key)}
+                          className="flex-1 bg-orange-500 text-white px-3 py-1.5 rounded text-sm hover:bg-orange-600 font-medium"
+                        >
+                          Restore
+                        </button>
+                        <button
+                          onClick={() => downloadBackup(backup.key)}
+                          className="bg-blue-500 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-600"
+                        >
+                          <Download size={16} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Warning */}
+            <div className="mt-4 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+              <p className="text-xs text-yellow-800">
+                <strong>Important:</strong> Backups are stored on this device only.
+                For extra safety, use the Download button to save backups to your computer
+                or cloud storage. You can also use Admin Mode to export a full JSON backup.
+              </p>
+            </div>
+
+            <button
+              onClick={() => setShowBackupModal(false)}
+              className="w-full mt-4 bg-gray-200 text-gray-700 p-3 rounded-lg hover:bg-gray-300"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Device Sync Import Modal */}
+      {showSyncModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">📱 Import Sync File</h3>
+              <button onClick={() => setShowSyncModal(false)}>
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-4">
+              <p className="text-sm text-orange-800 mb-2">
+                <strong>Use this to sync data FROM another device.</strong>
+              </p>
+              <p className="text-sm text-orange-700">
+                1. On your other device (phone), tap Menu → "Export Sync File"<br/>
+                2. Transfer that .json file to this device<br/>
+                3. Select the file below to import
+              </p>
+            </div>
+
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+              <p className="text-sm text-red-800">
+                <strong>⚠️ Warning:</strong> This will REPLACE all data in your current workspace with the imported data.
+              </p>
+            </div>
+
+            <input
+              ref={syncFileInputRef}
+              type="file"
+              accept=".json"
+              onChange={importSyncData}
+              className="hidden"
+            />
+
+            <button
+              onClick={() => syncFileInputRef.current?.click()}
+              disabled={syncImporting}
+              className="w-full bg-orange-500 text-white p-4 rounded-lg hover:bg-orange-600 disabled:opacity-50 flex items-center justify-center gap-2 text-lg font-semibold"
+            >
+              {syncImporting ? (
+                <>
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                  Importing...
+                </>
+              ) : (
+                <>
+                  <Download size={24} />
+                  Select Sync File to Import
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={() => setShowSyncModal(false)}
+              className="w-full mt-3 bg-gray-200 text-gray-700 p-3 rounded-lg hover:bg-gray-300"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}
