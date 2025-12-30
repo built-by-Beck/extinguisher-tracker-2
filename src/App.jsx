@@ -53,7 +53,8 @@ function App() {
     serial: '',
     vicinity: '',
     parentLocation: '',
-    section: 'Main Hospital'
+    section: 'Main Hospital',
+    category: 'standard'
   });
   const [newItemPhoto, setNewItemPhoto] = useState(null);
   const [newItemGps, setNewItemGps] = useState(null);
@@ -98,11 +99,154 @@ function App() {
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncImporting, setSyncImporting] = useState(false);
 
+  // Quick lists modals
+  const [showStatusList, setShowStatusList] = useState(null); // { status: 'pass'|'fail', scope: 'section'|'all' }
+  const [showCategoryList, setShowCategoryList] = useState(null); // { category: 'spare'|'replaced' }
+  const statusPressTimerRef = useRef(null);
+
   const scanInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const dbBackupInputRef = useRef(null);
   const syncFileInputRef = useRef(null);
   const timerIntervalRef = useRef(null);
+
+  // Duplicate cleanup state
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [duplicateGroups, setDuplicateGroups] = useState([]); // [{ assetId, keep, remove }]
+  const [duplicateScanRunning, setDuplicateScanRunning] = useState(false);
+  const [duplicateFixRunning, setDuplicateFixRunning] = useState(false);
+
+  const normalizeStatus = (s) => String(s || '').toLowerCase();
+  const pickPreferredDoc = (a, b) => {
+    // Returns the preferred doc between a and b using the same rules as list dedupe
+    const as = normalizeStatus(a.status);
+    const bs = normalizeStatus(b.status);
+    const acd = a.checkedDate ? new Date(a.checkedDate).getTime() : 0;
+    const bcd = b.checkedDate ? new Date(b.checkedDate).getTime() : 0;
+    const acr = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const bcr = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    if (as === 'pending' && bs !== 'pending') return b;
+    if (as !== 'pending' && bs === 'pending') return a;
+    if (as !== 'pending' && bs !== 'pending') return (bcd >= acd) ? b : a;
+    return (bcr >= acr) ? b : a;
+  };
+
+  const computeDuplicateGroups = () => {
+    const groupsMap = new Map();
+    for (const e of extinguishers) {
+      const key = String(e.assetId || '').trim();
+      if (!key) continue;
+      const arr = groupsMap.get(key) || [];
+      arr.push(e);
+      groupsMap.set(key, arr);
+    }
+    const groups = [];
+    for (const [assetId, arr] of groupsMap.entries()) {
+      if (arr.length <= 1) continue;
+      // choose keep doc
+      let keep = arr[0];
+      for (let i = 1; i < arr.length; i++) keep = pickPreferredDoc(keep, arr[i]);
+      const remove = arr.filter(x => x.id !== keep.id);
+      groups.push({ assetId, keep, remove });
+    }
+    return groups.sort((a, b) => String(a.assetId).localeCompare(String(b.assetId)));
+  };
+
+  const openDuplicateCleanup = () => {
+    setDuplicateScanRunning(true);
+    try {
+      const groups = computeDuplicateGroups();
+      setDuplicateGroups(groups);
+      setShowDuplicateModal(true);
+      if (groups.length === 0) {
+        alert('No duplicates found in the current month.');
+        setShowDuplicateModal(false);
+      }
+    } finally {
+      setDuplicateScanRunning(false);
+    }
+  };
+
+  const mergeHistories = (docs) => {
+    const all = [];
+    for (const d of docs) {
+      const hist = Array.isArray(d.inspectionHistory) ? d.inspectionHistory : [];
+      for (const h of hist) {
+        if (h && h.date) all.push(h);
+      }
+    }
+    // sort by date asc then dedupe by date+status+notes
+    all.sort((x, y) => new Date(x.date) - new Date(y.date));
+    const seen = new Set();
+    const uniq = [];
+    for (const h of all) {
+      const key = `${h.date}|${h.status}|${h.notes || ''}|${h.photoUrl || ''}`;
+      if (!seen.has(key)) { uniq.push(h); seen.add(key); }
+    }
+    return uniq;
+  };
+
+  const chooseLatestNonNull = (docs, field, dateField = 'checkedDate') => {
+    let best = null;
+    let bestDate = -1;
+    for (const d of docs) {
+      const val = d[field];
+      if (val) {
+        const t = d[dateField] ? new Date(d[dateField]).getTime() : 0;
+        if (t >= bestDate) { best = val; bestDate = t; }
+      }
+    }
+    return best;
+  };
+
+  const runDuplicateCleanup = async () => {
+    if (!user || !currentWorkspaceId) { alert('Please sign in and select a workspace.'); return; }
+    if (!duplicateGroups || duplicateGroups.length === 0) { setShowDuplicateModal(false); return; }
+    const confirm = window.confirm(`This will merge and remove ${duplicateGroups.reduce((n,g)=>n+g.remove.length,0)} duplicate records across ${duplicateGroups.length} Asset IDs. Continue?`);
+    if (!confirm) return;
+    setDuplicateFixRunning(true);
+    try {
+      for (const group of duplicateGroups) {
+        const { keep, remove } = group;
+        const docs = [keep, ...remove];
+        // Merge collections
+        const mergedHistory = mergeHistories(docs);
+        const mergedPhotos = [];
+        for (const d of docs) {
+          if (Array.isArray(d.photos)) {
+            for (const p of d.photos) { if (p && p.url) mergedPhotos.push(p); }
+          }
+        }
+        // Place keep's photos first
+        const keepPhotos = Array.isArray(keep.photos) ? keep.photos : [];
+        const otherPhotos = mergedPhotos.filter(p => !keepPhotos.find(kp => kp.url === p.url));
+        const finalPhotos = [...keepPhotos, ...otherPhotos];
+
+        const finalLastPhoto = chooseLatestNonNull(docs, 'lastInspectionPhotoUrl', 'checkedDate') || keep.lastInspectionPhotoUrl || null;
+        const finalLastGps = chooseLatestNonNull(docs, 'lastInspectionGps', 'checkedDate') || keep.lastInspectionGps || null;
+
+        const keepRef = doc(db, 'extinguishers', keep.id);
+        await setDoc(keepRef, {
+          photos: finalPhotos,
+          inspectionHistory: mergedHistory,
+          lastInspectionPhotoUrl: finalLastPhoto || null,
+          lastInspectionGps: finalLastGps || null
+        }, { merge: true });
+
+        // Delete others
+        for (const r of remove) {
+          try { await deleteDoc(doc(db, 'extinguishers', r.id)); } catch (e) { console.warn('Delete failed for duplicate', r.id, e); }
+        }
+      }
+      alert('Duplicate cleanup complete. Lists will refresh momentarily.');
+      setShowDuplicateModal(false);
+    } catch (e) {
+      console.error('Duplicate cleanup failed:', e);
+      alert(`Duplicate cleanup failed: ${e.message}`);
+    } finally {
+      setDuplicateFixRunning(false);
+    }
+  };
 
   // Authentication listener
   useEffect(() => {
@@ -197,6 +341,9 @@ function App() {
           localStorage.setItem(`currentWorkspace_${user.uid}`, sorted[0].id);
         }
       }
+    }, (error) => {
+      console.error('Firebase workspaces listener error:', error.code, error.message);
+      alert(`Firebase connection error: ${error.code}\n${error.message}\n\nPlease check your internet connection or try logging out and back in.`);
     });
 
     return () => unsubscribeWorkspaces();
@@ -209,25 +356,65 @@ function App() {
       return;
     }
 
-    // Load ALL extinguishers for user (don't filter by workspaceId to show legacy data)
-    // This ensures we see all 800+ extinguishers even if they don't have workspaceId
+    // Require a current workspace to avoid duplicate instances across months
+    if (!currentWorkspaceId) {
+      setExtinguishers([]);
+      return;
+    }
+
+    // Load extinguishers scoped to the current workspace to prevent duplicates
     const extinguishersQuery = query(
       collection(db, 'extinguishers'),
-      where('userId', '==', user.uid)
+      where('userId', '==', user.uid),
+      where('workspaceId', '==', currentWorkspaceId)
     );
 
+    const normalizeStatus = (s) => String(s || '').toLowerCase();
+    const dedupeExtinguishers = (items) => {
+      const byAsset = new Map();
+      for (const it of items) {
+        const key = String(it.assetId || it.id || '').trim();
+        if (!key) continue;
+        const prev = byAsset.get(key);
+        if (!prev) {
+          byAsset.set(key, it);
+          continue;
+        }
+        const prevStatus = normalizeStatus(prev.status);
+        const currStatus = normalizeStatus(it.status);
+        const prevChecked = prev.checkedDate ? new Date(prev.checkedDate).getTime() : 0;
+        const currChecked = it.checkedDate ? new Date(it.checkedDate).getTime() : 0;
+        const prevCreated = prev.createdAt ? new Date(prev.createdAt).getTime() : 0;
+        const currCreated = it.createdAt ? new Date(it.createdAt).getTime() : 0;
+
+        // Prefer non-pending over pending
+        const prevIsPending = prevStatus === 'pending';
+        const currIsPending = currStatus === 'pending';
+        let chooseCurr = false;
+        if (prevIsPending && !currIsPending) {
+          chooseCurr = true;
+        } else if (!prevIsPending && currIsPending) {
+          chooseCurr = false;
+        } else if (!prevIsPending && !currIsPending) {
+          // Both checked: choose newer checkedDate
+          chooseCurr = currChecked >= prevChecked;
+        } else {
+          // Both pending: choose newer createdAt
+          chooseCurr = currCreated >= prevCreated;
+        }
+
+        if (chooseCurr) byAsset.set(key, it);
+      }
+      return Array.from(byAsset.values());
+    };
+
     const unsubscribeExtinguishers = onSnapshot(extinguishersQuery, (snapshot) => {
-      console.log('=== EXTINGUISHER LOAD DEBUG ===');
-      console.log('Total extinguishers in database:', snapshot.docs.length);
-      
-      const extinguisherData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
-      // Show ALL extinguishers - no workspace filtering
-      console.log('Showing all extinguishers (no workspace filter):', extinguisherData.length, 'items');
+      const raw = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      const extinguisherData = dedupeExtinguishers(raw);
       setExtinguishers(extinguisherData);
+    }, (error) => {
+      console.error('Firebase extinguishers listener error:', error.code, error.message);
+      alert(`Firebase error loading extinguishers: ${error.code}\n${error.message}`);
     });
 
     // Load section times from localStorage scoped to workspace
@@ -266,6 +453,8 @@ function App() {
         };
       });
       setSectionNotes(notesData);
+    }, (error) => {
+      console.error('Firebase section notes listener error:', error.code, error.message);
     });
 
     return () => unsubscribeSectionNotes();
@@ -380,6 +569,30 @@ function App() {
     const failed = workspaceExtinguishers.filter(e => e.status === 'fail').length;
     const pending = workspaceExtinguishers.filter(e => e.status === 'pending').length;
     return { total, passed, failed, pending };
+  };
+
+  // Helper: month name + year derived from the selected workspace (fallback to current month)
+  const getWorkspaceMonthInfo = () => {
+    const ws = getCurrentWorkspace();
+    try {
+      if (ws?.monthYear) {
+        const [yy, mm] = String(ws.monthYear).split('-').map(Number);
+        if (yy && mm) {
+          const d = new Date(yy, mm - 1, 1);
+          return {
+            monthName: d.toLocaleDateString('en-US', { month: 'long' }),
+            year: yy
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to derive month from workspace:', ws?.monthYear, e);
+    }
+    const now = new Date();
+    return {
+      monthName: now.toLocaleDateString('en-US', { month: 'long' }),
+      year: now.getFullYear()
+    };
   };
 
   const switchWorkspace = (workspaceId) => {
@@ -649,12 +862,11 @@ function App() {
       const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const now = new Date();
-      const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1);
-      const monthName = previousMonth.toLocaleDateString('en-US', { month: 'long' });
+      const { monthName, year } = getWorkspaceMonthInfo();
       const timestamp = now.toISOString().replace(/[:.]/g, '-');
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${monthName}_Database_Backup_${timestamp}.json`;
+      a.download = `${monthName}_${year}_Database_Backup_${timestamp}.json`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -684,8 +896,9 @@ function App() {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Extinguishers');
       const now = new Date();
+      const { monthName, year } = getWorkspaceMonthInfo();
       const date = now.toISOString().split('T')[0];
-      XLSX.writeFile(wb, `Extinguisher_Database_Export_${date}.csv`);
+      XLSX.writeFile(wb, `Extinguisher_Database_Export_${monthName}_${year}_${date}.csv`);
     } catch (e) {
       console.error('Error exporting CSV:', e);
       alert('Failed to export CSV.');
@@ -1145,14 +1358,14 @@ function App() {
             try {
               if (existing) {
                 const docRef = doc(db, 'extinguishers', existing.id);
-                await updateDoc(docRef, {
+                await setDoc(docRef, {
                   vicinity: item.vicinity,
                   serial: item.serial,
                   parentLocation: item.parentLocation,
                   section: item.section,
                   // Intentionally do NOT touch: status, notes, photos, inspectionHistory, lastInspection*
                   updatedAt: new Date().toISOString()
-                });
+                }, { merge: true });
                 updated += 1;
               } else {
                 await addDoc(collection(db, 'extinguishers'), {
@@ -1201,10 +1414,17 @@ function App() {
       // optional photo upload
       let assetPhotoUrl = null;
       if (newItemPhoto instanceof File) {
-        const path = `assets/${newItem.assetId.trim()}/${Date.now()}_${newItemPhoto.name}`;
-        const sref = storageRef(storage, path);
-        const snap = await uploadBytes(sref, newItemPhoto, { contentType: newItemPhoto.type });
-        assetPhotoUrl = await getDownloadURL(snap.ref);
+        try {
+          const safeSeg = String(newItem.assetId || 'asset').replace(/[^a-zA-Z0-9_-]/g, '_');
+          const safeName = newItemPhoto.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const path = `assets/${user.uid}/${safeSeg}/${Date.now()}_${safeName}`;
+          const sref = storageRef(storage, path);
+          const snap = await uploadBytes(sref, newItemPhoto, { contentType: newItemPhoto.type });
+          assetPhotoUrl = await getDownloadURL(snap.ref);
+        } catch (uploadErr) {
+          console.warn('Asset photo upload failed; continuing without photo:', uploadErr);
+          assetPhotoUrl = null;
+        }
       }
 
       const item = {
@@ -1213,6 +1433,7 @@ function App() {
         serial: newItem.serial.trim(),
         parentLocation: newItem.parentLocation.trim(),
         section: newItem.section,
+        category: newItem.category || 'standard',
         status: 'pending',
         checkedDate: null,
         notes: '',
@@ -1231,7 +1452,8 @@ function App() {
         serial: '',
         vicinity: '',
         parentLocation: '',
-        section: 'Main Hospital'
+        section: 'Main Hospital',
+        category: 'standard'
       });
       setNewItemPhoto(null);
       setNewItemGps(null);
@@ -1243,13 +1465,14 @@ function App() {
   };
 
   const handleInspection = async (item, status, notes = '', inspectionData = null) => {
+    console.log('handleInspection called:', { itemId: item?.id, assetId: item?.assetId, status });
     try {
       let photoUrl = null;
       if (inspectionData?.photo instanceof File) {
         try {
           const file = inspectionData.photo;
           const safeSeg = String(item.assetId || item.id || 'asset').replace(/[^a-zA-Z0-9_-]/g, '_');
-          const path = `inspections/${safeSeg}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+          const path = `inspections/${user.uid}/${safeSeg}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
           const sref = storageRef(storage, path);
           const snapshot = await uploadBytes(sref, file, { contentType: file.type });
           photoUrl = await getDownloadURL(snapshot.ref);
@@ -1269,7 +1492,11 @@ function App() {
       };
 
       const docRef = doc(db, 'extinguishers', item.id);
-      await updateDoc(docRef, {
+      // Exclude 'id' from spread since it's the document path, not a field
+      const { id: _id, ...itemData } = item;
+      await setDoc(docRef, {
+        ...itemData,
+        userId: user.uid,
         status,
         checkedDate: new Date().toISOString(),
         notes,
@@ -1277,8 +1504,23 @@ function App() {
         lastInspectionPhotoUrl: photoUrl || null,
         lastInspectionGps: gps || null,
         inspectionHistory: [...(item.inspectionHistory || []), inspection]
-      });
-
+      }, { merge: true });
+      console.log('Inspection saved successfully for:', item.assetId);
+      // Optimistically update local state so lists/counters reflect immediately
+      const nowIso = new Date().toISOString();
+      setExtinguishers(prev => prev.map(e => {
+        if (!e || e.id !== item.id) return e;
+        return {
+          ...e,
+          status,
+          checkedDate: nowIso,
+          notes,
+          checklistData: inspectionData?.checklistData || e.checklistData,
+          lastInspectionPhotoUrl: photoUrl || e.lastInspectionPhotoUrl || null,
+          lastInspectionGps: gps || e.lastInspectionGps || null,
+          inspectionHistory: [...(e.inspectionHistory || []), inspection]
+        };
+      }));
       setSelectedItem(null);
     } catch (error) {
       console.error('Error updating inspection:', { code: error?.code, message: error?.message });
@@ -1380,14 +1622,15 @@ function App() {
 
     try {
       const docRef = doc(db, 'extinguishers', editItem.id);
-      await updateDoc(docRef, {
+      await setDoc(docRef, {
         assetId: editItem.assetId,
         vicinity: editItem.vicinity,
         serial: editItem.serial,
         parentLocation: editItem.parentLocation,
         section: editItem.section,
+        category: editItem.category || 'standard',
         location: editItem.location || null
-      });
+      }, { merge: true });
 
       // Update selectedItem if it's the same item being edited
       if (selectedItem && selectedItem.id === editItem.id) {
@@ -1418,11 +1661,11 @@ function App() {
   const resetStatus = async (item) => {
     try {
       const docRef = doc(db, 'extinguishers', item.id);
-      await updateDoc(docRef, {
+      await setDoc(docRef, {
         status: 'pending',
         checkedDate: null,
         notes: ''
-      });
+      }, { merge: true });
       setSelectedItem(null);
     } catch (error) {
       console.error('Error resetting status:', error);
@@ -1509,17 +1752,16 @@ function App() {
       return baseData;
     });
 
-    // Generate filename with previous month's name and current timestamp
+    // Generate filename with current month/year and current date
     const now = new Date();
-    const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1);
-    const monthName = previousMonth.toLocaleDateString('en-US', { month: 'long' });
+    const { monthName, year } = getWorkspaceMonthInfo();
     const timestamp = now.toISOString().split('T')[0]; // YYYY-MM-DD format
     const typeLabel = type === 'all' ? 'All' : type === 'passed' ? 'Passed' : 'Failed';
 
     const ws = XLSX.utils.json_to_sheet(formatted);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Inspections');
-    XLSX.writeFile(wb, `${monthName}_Extinguisher_Checks_${typeLabel}_${timestamp}_Export.xlsx`);
+    XLSX.writeFile(wb, `${monthName}_${year}_Extinguisher_Checks_${typeLabel}_${timestamp}_Export.xlsx`);
   };
 
   const exportTimeData = () => {
@@ -1533,16 +1775,15 @@ function App() {
       'Section Notes': sectionNotes[section]?.notes || ''
     }));
 
-    // Generate filename with previous month's name and current timestamp
+    // Generate filename with current month/year and current date
     const now = new Date();
-    const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1);
-    const monthName = previousMonth.toLocaleDateString('en-US', { month: 'long' });
+    const { monthName, year } = getWorkspaceMonthInfo();
     const timestamp = now.toISOString().split('T')[0]; // YYYY-MM-DD format
 
     const ws = XLSX.utils.json_to_sheet(timeData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Time Tracking');
-    XLSX.writeFile(wb, `${monthName}_Time_Tracking_${timestamp}_Export.xlsx`);
+    XLSX.writeFile(wb, `${monthName}_${year}_Time_Tracking_${timestamp}_Export.xlsx`);
   };
 
   // Device Sync Export - exports everything needed to sync to another device
@@ -1788,7 +2029,7 @@ function App() {
 
   const countsForSection = (section) => {
     const list = extinguishers.filter(e => e.section === section);
-    const unchecked = list.filter(e => e.status === 'pending').length;
+    const unchecked = list.filter(e => String(e.status || '').toLowerCase() === 'pending').length;
     return { checked: list.length - unchecked, unchecked };
   };
 
@@ -1802,7 +2043,7 @@ function App() {
         try {
           const file = inspectionData.photo;
           const safeSeg = String(item.assetId || item.id || 'asset').replace(/[^a-zA-Z0-9_-]/g, '_');
-          const path = `inspections/${safeSeg}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+          const path = `inspections/${user.uid}/${safeSeg}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
           const sref = storageRef(storage, path);
           const snapshot = await uploadBytes(sref, file, { contentType: file.type });
           photoUrl = await getDownloadURL(snapshot.ref);
@@ -1824,7 +2065,18 @@ function App() {
       if (gps) {
         updates.lastInspectionGps = gps;
       }
-      await updateDoc(docRef, updates);
+      await setDoc(docRef, updates, { merge: true });
+      // Optimistically update local state for notes/checklist/photo/gps so UI reflects immediately
+      setExtinguishers(prev => prev.map(e => {
+        if (!e || e.id !== item.id) return e;
+        return {
+          ...e,
+          ...(typeof updates.notes !== 'undefined' ? { notes: updates.notes } : {}),
+          ...(typeof updates.checklistData !== 'undefined' ? { checklistData: updates.checklistData } : {}),
+          ...(typeof updates.lastInspectionPhotoUrl !== 'undefined' ? { lastInspectionPhotoUrl: updates.lastInspectionPhotoUrl } : {}),
+          ...(typeof updates.lastInspectionGps !== 'undefined' ? { lastInspectionGps: updates.lastInspectionGps } : {})
+        };
+      }));
     } catch (e) {
       console.error('Error saving notes:', { code: e?.code, message: e?.message });
       alert(`Error saving notes.\n\n${e?.code || ''} ${e?.message || ''}`.trim());
@@ -1836,13 +2088,15 @@ function App() {
     if (!asset || !file) return;
     const photos = asset.photos || [];
     if (photos.length >= 5) { alert('Photo limit reached (5 per asset).'); return; }
-    const path = `assets/${asset.assetId || asset.id}/${Date.now()}_${file.name}`;
+    const safeSeg = String(asset.assetId || asset.id || 'asset').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const path = `assets/${user.uid}/${safeSeg}/${Date.now()}_${safeName}`;
     const sref = storageRef(storage, path);
     const snap = await uploadBytes(sref, file, { contentType: file.type });
     const url = await getDownloadURL(snap.ref);
     const docRef = doc(db, 'extinguishers', asset.id);
     const next = [...photos, { url, uploadedAt: new Date().toISOString(), path }];
-    await updateDoc(docRef, { photos: next });
+    await setDoc(docRef, { photos: next }, { merge: true });
     setSelectedItem({ ...asset, photos: next });
   };
 
@@ -1851,7 +2105,7 @@ function App() {
     if (index <= 0 || index >= photos.length) return;
     const reordered = [photos[index], ...photos.slice(0, index), ...photos.slice(index + 1)];
     const docRef = doc(db, 'extinguishers', asset.id);
-    await updateDoc(docRef, { photos: reordered });
+    await setDoc(docRef, { photos: reordered }, { merge: true });
     setSelectedItem({ ...asset, photos: reordered });
   };
 
@@ -1861,7 +2115,7 @@ function App() {
     const removing = photos[index];
     const docRef = doc(db, 'extinguishers', asset.id);
     const next = photos.filter((_, i) => i !== index);
-    await updateDoc(docRef, { photos: next });
+    await setDoc(docRef, { photos: next }, { merge: true });
     // hard delete from storage (best-effort)
     try { if (removing.path) await deleteObject(storageRef(storage, removing.path)); } catch (e) { console.warn('Failed to delete storage object', e); }
     setSelectedItem({ ...asset, photos: next });
@@ -1943,12 +2197,12 @@ function App() {
       console.log('Starting to reset', snapshot.docs.length, 'extinguishers...');
       const updatePromises = snapshot.docs.map(docSnapshot => {
         const docRef = doc(db, 'extinguishers', docSnapshot.id);
-        return updateDoc(docRef, {
+        return setDoc(docRef, {
           status: 'pending',
           checkedDate: null,
           notes: '',
           lastMonthlyReset: currentDate
-        });
+        }, { merge: true });
       });
 
       await Promise.all(updatePromises);
@@ -2038,16 +2292,18 @@ function App() {
         let matchesView;
         if (selectedSection !== 'All') {
           const currentViewMode = getSectionViewMode(selectedSection);
+          const st = String(item.status || '').toLowerCase();
           if (currentViewMode === 'unchecked') {
-            matchesView = item.status === 'pending';
+            matchesView = st === 'pending';
           } else { // checked
-            matchesView = item.status === 'pass' || item.status === 'fail';
+            matchesView = st === 'pass' || st === 'fail';
           }
         } else {
           // For "All" sections, use the global view filter
-          matchesView = view === 'pending' ? item.status === 'pending' :
-                       view === 'pass' ? item.status === 'pass' :
-                       view === 'fail' ? item.status === 'fail' : true;
+          const st = String(item.status || '').toLowerCase();
+          matchesView = view === 'pending' ? st === 'pending' :
+                       view === 'pass' ? st === 'pass' :
+                       view === 'fail' ? st === 'fail' : true;
         }
 
         const searchLower = searchTerm.toLowerCase();
@@ -2068,9 +2324,9 @@ function App() {
 
   const stats = {
     total: extinguishers.length,
-    pending: extinguishers.filter(e => e.status === 'pending').length,
-    pass: extinguishers.filter(e => e.status === 'pass').length,
-    fail: extinguishers.filter(e => e.status === 'fail').length
+    pending: extinguishers.filter(e => String(e.status || '').toLowerCase() === 'pending').length,
+    pass: extinguishers.filter(e => String(e.status || '').toLowerCase() === 'pass').length,
+    fail: extinguishers.filter(e => String(e.status || '').toLowerCase() === 'fail').length
   };
 
   const sectionCounts = SECTIONS.map(section => {
@@ -2078,9 +2334,9 @@ function App() {
     return {
       section,
       total: items.length,
-      pending: items.filter(e => e.status === 'pending').length,
-      pass: items.filter(e => e.status === 'pass').length,
-      fail: items.filter(e => e.status === 'fail').length
+      pending: items.filter(e => String(e.status || '').toLowerCase() === 'pending').length,
+      pass: items.filter(e => String(e.status || '').toLowerCase() === 'pass').length,
+      fail: items.filter(e => String(e.status || '').toLowerCase() === 'fail').length
     };
   });
 
@@ -2398,15 +2654,22 @@ function App() {
 
               {adminMode && (
                 <>
-                  <div className="border-t pt-2 mt-4">
-                  <p className="text-sm text-gray-600 mb-2 font-medium">Database Management (Admin)</p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      exportDatabaseCsv();
-                      setShowMenu(false);
-                    }}
-                    className="flex items-center gap-2 px-4 py-2 bg-sky-500 text-white rounded hover:bg-sky-600 transition w-full"
+              <div className="border-t pt-2 mt-4">
+                <p className="text-sm text-gray-600 mb-2 font-medium">Database Management (Admin)</p>
+              </div>
+              <button
+                onClick={() => openDuplicateCleanup()}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-500 text-white rounded hover:bg-indigo-600 transition w-full"
+              >
+                <History size={20} />
+                Cleanup Duplicates (by Asset ID)
+              </button>
+              <button
+                onClick={() => {
+                  exportDatabaseCsv();
+                  setShowMenu(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-sky-500 text-white rounded hover:bg-sky-600 transition w-full"
                   >
                     <Download size={20} />
                     Export Database (CSV)
@@ -2429,18 +2692,18 @@ function App() {
                     className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 transition w-full"
                   >
                     <Upload size={20} />
-                    Import Database (JSON)
-                  </button>
-                  <button
-                    onClick={() => {
-                      repairMissingWorkspaceIds();
-                      setShowMenu(false);
-                    }}
-                    className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition w-full"
-                  >
-                    <RotateCcw size={20} />
-                    Repair Missing WorkspaceIds
-                  </button>
+                Import Database (JSON)
+              </button>
+              <button
+                onClick={() => {
+                  repairMissingWorkspaceIds();
+                  setShowMenu(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition w-full"
+              >
+                <RotateCcw size={20} />
+                Repair Missing WorkspaceIds
+              </button>
                   <button
                     onClick={() => {
                       setShowImportModal(true);
@@ -2508,6 +2771,39 @@ function App() {
                 <Clock size={20} />
                 Export Time Data
               </button>
+
+              {/* Quick Lists */}
+              <div className="border-t pt-2 mt-4">
+                <p className="text-sm text-gray-600 mb-2 font-medium">Quick Lists</p>
+              </div>
+              <button
+                onClick={() => setShowStatusList({ status: 'pass', scope: selectedSection === 'All' ? 'all' : 'section' })}
+                className="flex items-center gap-2 px-4 py-2 bg-emerald-500 text-white rounded hover:bg-emerald-600 transition w-full"
+              >
+                <CheckCircle size={20} />
+                View Passed
+              </button>
+              <button
+                onClick={() => setShowStatusList({ status: 'fail', scope: selectedSection === 'All' ? 'all' : 'section' })}
+                className="flex items-center gap-2 px-4 py-2 bg-rose-500 text-white rounded hover:bg-rose-600 transition w-full"
+              >
+                <XCircle size={20} />
+                View Failed
+              </button>
+              <button
+                onClick={() => setShowCategoryList({ category: 'spare' })}
+                className="flex items-center gap-2 px-4 py-2 bg-sky-500 text-white rounded hover:bg-sky-600 transition w-full"
+              >
+                <Circle size={20} />
+                View Spares
+              </button>
+              <button
+                onClick={() => setShowCategoryList({ category: 'replaced' })}
+                className="flex items-center gap-2 px-4 py-2 bg-amber-500 text-white rounded hover:bg-amber-600 transition w-full"
+              >
+                <History size={20} />
+                View Replaced
+              </button>
               {adminMode && (
                 <>
                   <div className="border-t pt-2 mt-4">
@@ -2529,11 +2825,47 @@ function App() {
             <div className="text-3xl font-bold text-gray-700">{stats.pending}</div>
             <div className="text-gray-600">Pending</div>
           </div>
-          <div className="bg-white p-4 rounded-lg shadow text-center">
+          <div
+            className="bg-white p-4 rounded-lg shadow text-center cursor-pointer hover:shadow-md transition"
+            onClick={() => setShowStatusList({ status: 'pass', scope: selectedSection === 'All' ? 'all' : 'section' })}
+            onMouseDown={() => {
+              if (statusPressTimerRef.current) clearTimeout(statusPressTimerRef.current);
+              statusPressTimerRef.current = setTimeout(() => {
+                setShowStatusList({ status: 'pass', scope: 'all' });
+              }, 600);
+            }}
+            onMouseUp={() => { if (statusPressTimerRef.current) { clearTimeout(statusPressTimerRef.current); statusPressTimerRef.current = null; } }}
+            onMouseLeave={() => { if (statusPressTimerRef.current) { clearTimeout(statusPressTimerRef.current); statusPressTimerRef.current = null; } }}
+            onTouchStart={() => {
+              if (statusPressTimerRef.current) clearTimeout(statusPressTimerRef.current);
+              statusPressTimerRef.current = setTimeout(() => {
+                setShowStatusList({ status: 'pass', scope: 'all' });
+              }, 600);
+            }}
+            onTouchEnd={() => { if (statusPressTimerRef.current) { clearTimeout(statusPressTimerRef.current); statusPressTimerRef.current = null; } }}
+          >
             <div className="text-3xl font-bold text-green-600">{stats.pass}</div>
             <div className="text-gray-600">Passed</div>
           </div>
-          <div className="bg-white p-4 rounded-lg shadow text-center">
+          <div
+            className="bg-white p-4 rounded-lg shadow text-center cursor-pointer hover:shadow-md transition"
+            onClick={() => setShowStatusList({ status: 'fail', scope: selectedSection === 'All' ? 'all' : 'section' })}
+            onMouseDown={() => {
+              if (statusPressTimerRef.current) clearTimeout(statusPressTimerRef.current);
+              statusPressTimerRef.current = setTimeout(() => {
+                setShowStatusList({ status: 'fail', scope: 'all' });
+              }, 600);
+            }}
+            onMouseUp={() => { if (statusPressTimerRef.current) { clearTimeout(statusPressTimerRef.current); statusPressTimerRef.current = null; } }}
+            onMouseLeave={() => { if (statusPressTimerRef.current) { clearTimeout(statusPressTimerRef.current); statusPressTimerRef.current = null; } }}
+            onTouchStart={() => {
+              if (statusPressTimerRef.current) clearTimeout(statusPressTimerRef.current);
+              statusPressTimerRef.current = setTimeout(() => {
+                setShowStatusList({ status: 'fail', scope: 'all' });
+              }, 600);
+            }}
+            onTouchEnd={() => { if (statusPressTimerRef.current) { clearTimeout(statusPressTimerRef.current); statusPressTimerRef.current = null; } }}
+          >
             <div className="text-3xl font-bold text-red-600">{stats.fail}</div>
             <div className="text-gray-600">Failed</div>
           </div>
@@ -2544,6 +2876,106 @@ function App() {
             <div className="text-gray-600">Complete</div>
           </div>
         </div>
+
+        {/* Status Quick List Modal */}
+        {showStatusList && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <div className="bg-white rounded-lg p-6 max-w-3xl w-full my-8">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold">
+                  {showStatusList.status === 'pass' ? 'Passed' : 'Failed'} Extinguishers
+                  {showStatusList.scope === 'section' && selectedSection !== 'All' ? ` — ${selectedSection}` : ' — All Sections'}
+                </h3>
+                <button onClick={() => setShowStatusList(null)}>
+                  <X size={24} />
+                </button>
+              </div>
+              <div className="flex items-center gap-3 mb-4">
+                <label className="text-sm text-gray-700">Scope:</label>
+                <select
+                  value={showStatusList.scope}
+                  onChange={(e) => setShowStatusList(prev => ({ ...prev, scope: e.target.value }))}
+                  className="p-2 border rounded"
+                >
+                  <option value="section">Current Section</option>
+                  <option value="all">All Sections</option>
+                </select>
+              </div>
+              <div className="max-h-[70vh] overflow-y-auto">
+                {(() => {
+                  const scopeIsSection = showStatusList.scope === 'section' && selectedSection !== 'All';
+                  const list = extinguishers
+                    .filter(e => String(e.status || '').toLowerCase() === showStatusList.status)
+                    .filter(e => !scopeIsSection || e.section === selectedSection)
+                    .sort((a, b) => String(a.assetId || '').localeCompare(String(b.assetId || '')));
+                  if (list.length === 0) {
+                    return <div className="text-gray-500">No items found.</div>;
+                  }
+                  return (
+                    <div className="space-y-2">
+                      {list.map(item => (
+                        <div key={item.id} className="p-3 border rounded flex items-center justify-between bg-gray-50">
+                          <div>
+                            <div className="font-semibold">{item.assetId}</div>
+                            <div className="text-xs text-gray-600">{item.section} • {item.vicinity} {item.parentLocation ? `• ${item.parentLocation}` : ''}</div>
+                          </div>
+                          <button
+                            className="text-blue-600 hover:underline"
+                            onClick={() => { setShowStatusList(null); navigate(`/app/extinguisher/${item.assetId}`); }}
+                          >
+                            View
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Category Quick List Modal (Spare / Replaced) */}
+        {showCategoryList && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <div className="bg-white rounded-lg p-6 max-w-3xl w-full my-8">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold capitalize">{showCategoryList.category} Extinguishers</h3>
+                <button onClick={() => setShowCategoryList(null)}>
+                  <X size={24} />
+                </button>
+              </div>
+              <div className="max-h-[70vh] overflow-y-auto">
+                {(() => {
+                  const list = extinguishers
+                    .filter(e => (e.category || 'standard') === showCategoryList.category)
+                    .sort((a, b) => String(a.assetId || '').localeCompare(String(b.assetId || '')));
+                  if (list.length === 0) {
+                    return <div className="text-gray-500">No items found.</div>;
+                  }
+                  return (
+                    <div className="space-y-2">
+                      {list.map(item => (
+                        <div key={item.id} className="p-3 border rounded flex items-center justify-between bg-gray-50">
+                          <div>
+                            <div className="font-semibold">{item.assetId}</div>
+                            <div className="text-xs text-gray-600">{item.section} • {item.vicinity} {item.parentLocation ? `• ${item.parentLocation}` : ''}</div>
+                          </div>
+                          <button
+                            className="text-blue-600 hover:underline"
+                            onClick={() => { setShowCategoryList(null); navigate(`/app/extinguisher/${item.assetId}`); }}
+                          >
+                            View
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-4 mb-6 relative z-10">
           <button
@@ -2952,6 +3384,19 @@ function App() {
               </div>
 
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                <select
+                  value={newItem.category}
+                  onChange={(e) => setNewItem({ ...newItem, category: e.target.value })}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="standard">Standard</option>
+                  <option value="spare">Spare</option>
+                  <option value="replaced">Replaced</option>
+                </select>
+              </div>
+
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Photo (optional)</label>
                 <input type="file" accept="image/*" capture="environment" onChange={(e)=> setNewItemPhoto(e.target.files?.[0] || null)} />
               </div>
@@ -3121,7 +3566,7 @@ function App() {
                       const newValue = e.target.value.trim();
                       try {
                         const docRef = doc(db, 'extinguishers', selectedItem.id);
-                        await updateDoc(docRef, { manufactureYear: newValue });
+                        await setDoc(docRef, { manufactureYear: newValue }, { merge: true });
                       } catch (err) {
                         console.error('Error saving manufacture year:', err);
                         alert('Error saving year. Please try again.');
@@ -3375,6 +3820,19 @@ function App() {
                   {SECTIONS.map(section => (
                     <option key={section} value={section}>{section}</option>
                   ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                <select
+                  value={editItem.category || 'standard'}
+                  onChange={(e) => setEditItem({ ...editItem, category: e.target.value })}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                >
+                  <option value="standard">Standard</option>
+                  <option value="spare">Spare</option>
+                  <option value="replaced">Replaced</option>
                 </select>
               </div>
 
@@ -3938,6 +4396,52 @@ function App() {
             >
               Cancel
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Duplicate Cleanup Modal */}
+      {showDuplicateModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-lg p-6 max-w-3xl w-full my-8">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">Duplicate Cleanup — Current Month</h3>
+              <button onClick={() => setShowDuplicateModal(false)}>
+                <X size={24} />
+              </button>
+            </div>
+            {duplicateScanRunning ? (
+              <div className="text-gray-600">Scanning for duplicates…</div>
+            ) : duplicateGroups.length === 0 ? (
+              <div className="text-gray-600">No duplicates found.</div>
+            ) : (
+              <>
+                <div className="mb-3 text-sm text-gray-700">
+                  Found {duplicateGroups.length} Asset ID(s) with duplicates. Total duplicates: {duplicateGroups.reduce((n,g)=>n+g.remove.length,0)}
+                </div>
+                <div className="max-h-[60vh] overflow-y-auto space-y-3">
+                  {duplicateGroups.map(group => (
+                    <div key={group.assetId} className="p-3 border rounded bg-gray-50">
+                      <div className="font-semibold">Asset ID: {group.assetId}</div>
+                      <div className="text-xs text-gray-600 mt-1">
+                        Keep: {group.keep.id} • Status: {String(group.keep.status).toUpperCase()} {group.keep.checkedDate ? `• Checked: ${new Date(group.keep.checkedDate).toLocaleString()}` : ''}
+                      </div>
+                      <div className="text-xs text-gray-600">Remove: {group.remove.map(r => r.id).join(', ')}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-end gap-2 mt-4">
+                  <button onClick={() => setShowDuplicateModal(false)} className="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300">Cancel</button>
+                  <button
+                    onClick={runDuplicateCleanup}
+                    disabled={duplicateFixRunning}
+                    className={`px-4 py-2 rounded text-white ${duplicateFixRunning ? 'bg-indigo-300' : 'bg-indigo-600 hover:bg-indigo-700'}`}
+                  >
+                    {duplicateFixRunning ? 'Cleaning…' : 'Merge & Remove Duplicates'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

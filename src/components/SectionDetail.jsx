@@ -43,8 +43,33 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
   }, [section]);
 
   const items = useMemo(() => {
+    const normalizeStatus = (s) => String(s || '').toLowerCase();
+    // Dedupe by Asset ID, prefer non-pending and newest checkedDate
     const list = extinguishers.filter(e => e.section === section);
-    const filtered = list.filter(e => mode === 'unchecked' ? e.status === 'pending' : (e.status === 'pass' || e.status === 'fail'));
+    const byAsset = new Map();
+    for (const e of list) {
+      const key = String(e.assetId || e.id || '').trim();
+      if (!key) continue;
+      const prev = byAsset.get(key);
+      if (!prev) { byAsset.set(key, e); continue; }
+      const ps = normalizeStatus(prev.status);
+      const cs = normalizeStatus(e.status);
+      const pcd = prev.checkedDate ? new Date(prev.checkedDate).getTime() : 0;
+      const ccd = e.checkedDate ? new Date(e.checkedDate).getTime() : 0;
+      const pcr = prev.createdAt ? new Date(prev.createdAt).getTime() : 0;
+      const ccr = e.createdAt ? new Date(e.createdAt).getTime() : 0;
+      let chooseCurr = false;
+      if (ps === 'pending' && cs !== 'pending') chooseCurr = true;
+      else if (ps !== 'pending' && cs === 'pending') chooseCurr = false;
+      else if (ps !== 'pending' && cs !== 'pending') chooseCurr = ccd >= pcd;
+      else chooseCurr = ccr >= pcr;
+      if (chooseCurr) byAsset.set(key, e);
+    }
+    const unique = Array.from(byAsset.values());
+    const filtered = unique.filter(e => {
+      const st = normalizeStatus(e.status);
+      return mode === 'unchecked' ? st === 'pending' : (st === 'pass' || st === 'fail');
+    });
 
     // Sort the filtered list
     const sorted = [...filtered].sort((a, b) => {
@@ -447,13 +472,32 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
             </div>
 
             <div className="p-4 border-t bg-gray-50 flex flex-wrap gap-2 justify-end">
+              {/* Always allow edit and saving notes */}
               <button onClick={() => { onEdit?.(activeItem); }} className="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300">Edit</button>
-              <button onClick={() => {
-                const inspectionData = { checklistData: checklist, notes, photo: photoFile || null, gps: gps || null };
-                onSaveNotes?.(activeItem, checklistSummary(), inspectionData);
-              }} className="px-4 py-2 rounded bg-slate-200 hover:bg-slate-300">Save Notes</button>
-              <button onClick={() => saveInspection('fail')} className="px-4 py-2 rounded bg-red-600 text-white hover:bg-red-700">Fail</button>
-              <button onClick={() => saveInspection('pass')} className="px-4 py-2 rounded bg-green-600 text-white hover:bg-green-700">Pass</button>
+              <button
+                onClick={() => {
+                  const inspectionData = { checklistData: checklist, notes, photo: photoFile || null, gps: gps || null };
+                  onSaveNotes?.(activeItem, checklistSummary(), inspectionData);
+                }}
+                className="px-4 py-2 rounded bg-slate-200 hover:bg-slate-300"
+              >
+                Save Notes
+              </button>
+
+              {/* Only show Pass/Fail when item is still pending in this workspace (month) */}
+              {activeItem?.status === 'pending' ? (
+                <>
+                  <button onClick={() => saveInspection('fail')} className="px-4 py-2 rounded bg-red-600 text-white hover:bg-red-700">Fail</button>
+                  <button onClick={() => saveInspection('pass')} className="px-4 py-2 rounded bg-green-600 text-white hover:bg-green-700">Pass</button>
+                </>
+              ) : (
+                <div className="ml-auto flex items-center gap-2 text-sm">
+                  <span className={`px-2 py-1 rounded ${activeItem?.status === 'pass' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    {activeItem?.status === 'pass' ? 'Already PASSED' : 'Already FAILED'}
+                  </span>
+                  <span className="text-gray-500">Reset next month to re-check.</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
