@@ -209,25 +209,31 @@ function App() {
       return;
     }
 
-    // Load extinguishers from Firestore - filter by workspace if available, otherwise load all
-    const extinguishersQuery = currentWorkspaceId
-      ? query(
-          collection(db, 'extinguishers'),
-          where('userId', '==', user.uid),
-          where('workspaceId', '==', currentWorkspaceId)
-        )
-      : query(
-          collection(db, 'extinguishers'),
-          where('userId', '==', user.uid)
-        );
+    // Load ALL extinguishers for user (don't filter by workspaceId to show legacy data)
+    // This ensures we see all 800+ extinguishers even if they don't have workspaceId
+    const extinguishersQuery = query(
+      collection(db, 'extinguishers'),
+      where('userId', '==', user.uid)
+    );
 
     const unsubscribeExtinguishers = onSnapshot(extinguishersQuery, (snapshot) => {
-      console.log('Extinguishers snapshot received:', snapshot.docs.length, 'items for workspace:', currentWorkspaceId);
+      console.log('Extinguishers snapshot received:', snapshot.docs.length, 'total items (all workspaces)');
       const extinguisherData = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
-      setExtinguishers(extinguisherData);
+      
+      // If workspace is selected, filter in memory (but still show items without workspaceId)
+      if (currentWorkspaceId) {
+        const filtered = extinguisherData.filter(e => 
+          !e.workspaceId || e.workspaceId === currentWorkspaceId
+        );
+        console.log('Filtered to workspace:', filtered.length, 'items (including', 
+          extinguisherData.length - filtered.length, 'without workspaceId)');
+        setExtinguishers(filtered);
+      } else {
+        setExtinguishers(extinguisherData);
+      }
     });
 
     // Load section times from localStorage scoped to workspace
