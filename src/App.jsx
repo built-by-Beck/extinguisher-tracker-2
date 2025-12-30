@@ -217,21 +217,39 @@ function App() {
     );
 
     const unsubscribeExtinguishers = onSnapshot(extinguishersQuery, (snapshot) => {
-      console.log('Extinguishers snapshot received:', snapshot.docs.length, 'total items (all workspaces)');
+      console.log('=== EXTINGUISHER LOAD DEBUG ===');
+      console.log('Total extinguishers in database:', snapshot.docs.length);
+      console.log('Current workspace ID:', currentWorkspaceId);
+      
       const extinguisherData = snapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
+      
+      // Count by workspaceId
+      const workspaceCounts = {};
+      const noWorkspace = [];
+      extinguisherData.forEach(e => {
+        if (e.workspaceId) {
+          workspaceCounts[e.workspaceId] = (workspaceCounts[e.workspaceId] || 0) + 1;
+        } else {
+          noWorkspace.push(e.id);
+        }
+      });
+      console.log('Extinguishers by workspace:', workspaceCounts);
+      console.log('Extinguishers WITHOUT workspaceId:', noWorkspace.length, noWorkspace.slice(0, 5));
       
       // If workspace is selected, filter in memory (but still show items without workspaceId)
       if (currentWorkspaceId) {
         const filtered = extinguisherData.filter(e => 
           !e.workspaceId || e.workspaceId === currentWorkspaceId
         );
-        console.log('Filtered to workspace:', filtered.length, 'items (including', 
-          extinguisherData.length - filtered.length, 'without workspaceId)');
+        console.log('After filtering for workspace:', filtered.length, 'items');
+        console.log('  - With workspaceId matching:', filtered.filter(e => e.workspaceId === currentWorkspaceId).length);
+        console.log('  - Without workspaceId (legacy):', filtered.filter(e => !e.workspaceId).length);
         setExtinguishers(filtered);
       } else {
+        console.log('No workspace selected - showing all:', extinguisherData.length, 'items');
         setExtinguishers(extinguisherData);
       }
     });
