@@ -349,24 +349,17 @@ function App() {
     return () => unsubscribeWorkspaces();
   }, [user]);
 
-  // Load extinguishers filtered by current workspace (or all if no workspace)
+  // Load extinguishers - show ALL extinguishers regardless of workspaceId
   useEffect(() => {
     if (!user) {
       setExtinguishers([]);
       return;
     }
 
-    // Require a current workspace to avoid duplicate instances across months
-    if (!currentWorkspaceId) {
-      setExtinguishers([]);
-      return;
-    }
-
-    // Load extinguishers scoped to the current workspace to prevent duplicates
+    // Load ALL extinguishers for user - no workspace filtering
     const extinguishersQuery = query(
       collection(db, 'extinguishers'),
-      where('userId', '==', user.uid),
-      where('workspaceId', '==', currentWorkspaceId)
+      where('userId', '==', user.uid)
     );
 
     const normalizeStatus = (s) => String(s || '').toLowerCase();
