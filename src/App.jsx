@@ -71,6 +71,7 @@ function App() {
   const [showSectionNotesModal, setShowSectionNotesModal] = useState(false);
   const [currentSectionNote, setCurrentSectionNote] = useState('');
   const [noteSelectedSection, setNoteSelectedSection] = useState('Main Hospital');
+  const [saveNoteForNextMonth, setSaveNoteForNextMonth] = useState(false);
 
   // Export options state
   const [showExportModal, setShowExportModal] = useState(false);
@@ -442,7 +443,8 @@ function App() {
         notesData[data.section] = {
           id: doc.id,
           notes: data.notes || '',
-          lastUpdated: data.lastUpdated
+          lastUpdated: data.lastUpdated,
+          saveForNextMonth: data.saveForNextMonth || false
         };
       });
       setSectionNotes(notesData);
@@ -616,7 +618,8 @@ function App() {
 
       const wsDoc = await addDoc(collection(db, 'workspaces'), newWorkspace);
 
-      // If copying from another workspace, copy all extinguishers with pending status
+      // If copying from another workspace, copy all extinguishers and reset them to pending
+      // This ensures a fresh start for the new month with all extinguishers at 0% complete
       if (copyFrom) {
         const sourceQuery = query(
           collection(db, 'extinguishers'),
@@ -635,18 +638,52 @@ function App() {
             vicinity: data.vicinity || '',
             parentLocation: data.parentLocation || '',
             section: data.section,
-            status: 'pending',
-            checkedDate: null,
-            notes: '',
-            inspectionHistory: [],
+            category: data.category || 'standard',
+            status: 'pending', // Always reset to pending for new month
+            checkedDate: null, // Clear checked date
+            notes: '', // Clear notes
+            inspectionHistory: data.inspectionHistory || [], // Keep history
             userId: user.uid,
             workspaceId: wsDoc.id,
             createdAt: now.toISOString(),
             photoUrl: data.photoUrl || null,
-            location: data.location || null
+            location: data.location || null,
+            photos: data.photos || [],
+            lastInspectionPhotoUrl: null,
+            lastInspectionGps: null
           });
         });
         await batch.commit();
+      }
+
+      // Clear section notes for new workspace (unless marked to save)
+      try {
+        const notesQuery = query(
+          collection(db, 'sectionNotes'),
+          where('userId', '==', user.uid)
+        );
+        const notesSnap = await getDocs(notesQuery);
+        const notesBatch = writeBatch(db);
+        notesSnap.docs.forEach(noteDoc => {
+          const noteData = noteDoc.data();
+          // Only clear notes that are NOT marked to save for next month
+          if (!noteData.saveForNextMonth) {
+            notesBatch.update(noteDoc.ref, {
+              notes: '',
+              lastUpdated: now.toISOString()
+            });
+          } else {
+            // Clear the flag after using it
+            notesBatch.update(noteDoc.ref, {
+              saveForNextMonth: false,
+              lastUpdated: now.toISOString()
+            });
+          }
+        });
+        await notesBatch.commit();
+      } catch (notesError) {
+        console.warn('Could not clear section notes for new workspace:', notesError);
+        // Non-critical, continue
       }
 
       setShowCreateWorkspace(false);
@@ -1939,6 +1976,7 @@ function App() {
     setNoteSelectedSection(selectedSection); // Start with current section
     const currentNote = sectionNotes[selectedSection]?.notes || '';
     setCurrentSectionNote(currentNote);
+    setSaveNoteForNextMonth(sectionNotes[selectedSection]?.saveForNextMonth || false);
     setShowSectionNotesModal(true);
   };
 
@@ -1946,6 +1984,7 @@ function App() {
     setNoteSelectedSection(section);
     const currentNote = sectionNotes[section]?.notes || '';
     setCurrentSectionNote(currentNote);
+    setSaveNoteForNextMonth(sectionNotes[section]?.saveForNextMonth || false);
   };
 
   const saveSectionNotes = async () => {
@@ -1956,6 +1995,7 @@ function App() {
         const docRef = doc(db, 'sectionNotes', existingNote.id);
         await updateDoc(docRef, {
           notes: currentSectionNote,
+          saveForNextMonth: saveNoteForNextMonth,
           lastUpdated: new Date().toISOString()
         });
       } else {
@@ -1970,6 +2010,7 @@ function App() {
           const docRef = found.docs[0].ref;
           await updateDoc(docRef, {
             notes: currentSectionNote,
+            saveForNextMonth: saveNoteForNextMonth,
             lastUpdated: new Date().toISOString()
           });
         } else {
@@ -1985,6 +2026,7 @@ function App() {
               userId: user.uid,
               section: noteSelectedSection,
               notes: currentSectionNote,
+              saveForNextMonth: saveNoteForNextMonth,
               lastUpdated: new Date().toISOString(),
               createdAt: new Date().toISOString()
             }, { merge: true });
@@ -1994,6 +2036,7 @@ function App() {
               userId: user.uid,
               section: noteSelectedSection,
               notes: currentSectionNote,
+              saveForNextMonth: saveNoteForNextMonth,
               lastUpdated: new Date().toISOString(),
               createdAt: new Date().toISOString()
             });
@@ -2002,6 +2045,7 @@ function App() {
       }
 
       setShowSectionNotesModal(false);
+      setSaveNoteForNextMonth(false);
       alert(`Notes for ${noteSelectedSection} saved successfully!`);
     } catch (error) {
       console.error('Error saving section notes:', { code: error?.code, message: error?.message, section: noteSelectedSection });
@@ -2351,8 +2395,8 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-800 via-gray-900 to-black pb-20">
-      <div className="max-w-6xl mx-auto p-4">
+    <div className="min-h-screen bg-gradient-to-b from-gray-800 via-gray-900 to-black pb-20" style={{ width: '100%', maxWidth: '100vw', overflowX: 'hidden' }}>
+      <div className="max-w-6xl mx-auto p-3 sm:p-4" style={{ width: '100%', maxWidth: '100%' }}>
         {/* Banner Image */}
         <div className="mb-2 rounded-lg overflow-hidden shadow-2xl" style={{ height: '270px' }}>
           <img
@@ -2379,10 +2423,10 @@ function App() {
         </div>
 
         {/* Header with gradient and red border */}
-        <div className="bg-gradient-to-r from-gray-700 to-gray-800 text-white p-4 rounded-lg shadow-lg mb-6 border border-red-900">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-4">
-              <div className="text-sm">
+        <div className="bg-gradient-to-r from-gray-700 to-gray-800 text-white p-3 sm:p-4 rounded-lg shadow-lg mb-6 border border-red-900">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-4 w-full sm:w-auto">
+              <div className="text-xs sm:text-sm">
                 <span className="text-gray-400">Fire Safety Management</span>
                 <Link to="/" className="text-white font-semibold ml-2 hover:text-red-400 transition">
                   Fire Extinguisher Tracker
@@ -2390,7 +2434,7 @@ function App() {
               </div>
               {/* Workspace Badge - Long press to switch */}
               <div
-                className={`ml-4 px-4 py-2 rounded-lg text-base font-bold cursor-pointer select-none transition-all shadow-md border-2 ${
+                className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-sm sm:text-base font-bold cursor-pointer select-none transition-all shadow-md border-2 ${
                   workspaceBadgePressing
                     ? 'bg-yellow-400 text-yellow-900 scale-105 border-yellow-600'
                     : workspaces.length > 1
@@ -2404,47 +2448,48 @@ function App() {
                 onTouchEnd={handleWorkspaceBadgeTouchEnd}
                 title="Hold for 0.5s to switch inspection month"
               >
-                <div className="flex items-center gap-2">
-                  <Calendar size={18} />
-                  <span>{getCurrentWorkspace()?.label || 'Loading...'}</span>
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  <Calendar size={16} className="sm:w-[18px] sm:h-[18px]" />
+                  <span className="whitespace-nowrap">{getCurrentWorkspace()?.label || 'Loading...'}</span>
                   {workspaces.length > 1 && (
-                    <span className="text-sm bg-white bg-opacity-50 px-2 py-0.5 rounded">
+                    <span className="text-xs sm:text-sm bg-white bg-opacity-50 px-1.5 sm:px-2 py-0.5 rounded">
                       {workspaces.length} months
                     </span>
                   )}
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-400">Logged in as:</span>
-              <span className="text-sm text-white">{user.email}</span>
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap w-full sm:w-auto justify-end">
+              <span className="text-xs text-gray-400 hidden sm:inline">Logged in as:</span>
+              <span className="text-xs sm:text-sm text-white truncate max-w-[120px] sm:max-w-none">{user.email}</span>
               <button
                 onClick={() => navigate('/app/calculator')}
-                className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded flex items-center gap-2"
+                className="px-2 sm:px-3 py-1.5 sm:py-2 bg-red-600 hover:bg-red-700 text-white rounded flex items-center gap-1 sm:gap-2 text-xs sm:text-sm"
                 title="Open Fire Extinguisher Calculator"
               >
-                <CalculatorIcon size={18} />
-                Calculator
+                <CalculatorIcon size={16} className="sm:w-[18px] sm:h-[18px]" />
+                <span className="hidden sm:inline">Calculator</span>
               </button>
               <button
                 onClick={() => setAdminMode(!adminMode)}
-                className={`p-2 hover:bg-gray-600 rounded flex items-center gap-2 ${adminMode ? 'bg-gray-600' : ''}`}
+                className={`p-1.5 sm:p-2 hover:bg-gray-600 rounded flex items-center gap-1 sm:gap-2 ${adminMode ? 'bg-gray-600' : ''}`}
                 title={adminMode ? 'Exit Admin Mode' : 'Admin Mode'}
               >
-                <Settings size={18} />
+                <Settings size={18} className="sm:w-[18px] sm:h-[18px]" />
               </button>
               <button
                 onClick={handleLogout}
-                className="p-2 hover:bg-gray-600 rounded flex items-center gap-2"
+                className="p-1.5 sm:p-2 hover:bg-gray-600 rounded flex items-center gap-1 sm:gap-2"
                 title="Logout"
               >
-                <LogOut size={18} />
+                <LogOut size={18} className="sm:w-[18px] sm:h-[18px]" />
               </button>
               <button
                 onClick={() => setShowMenu(!showMenu)}
-                className="p-2 hover:bg-gray-600 rounded"
+                className="p-1.5 sm:p-2 hover:bg-gray-600 rounded flex items-center"
+                title="Menu"
               >
-                <Menu size={20} />
+                <Menu size={20} className="sm:w-[20px] sm:h-[20px]" />
               </button>
             </div>
           </div>
@@ -3228,6 +3273,18 @@ function App() {
               <div className="text-xs text-gray-500 mt-2">
                 These notes are specific to {noteSelectedSection} and separate from individual fire extinguisher notes.
               </div>
+              <div className="mt-3 flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="saveForNextMonth"
+                  checked={saveNoteForNextMonth}
+                  onChange={(e) => setSaveNoteForNextMonth(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <label htmlFor="saveForNextMonth" className="text-sm text-gray-700 cursor-pointer">
+                  Save this note for next month's inspection (otherwise it will be cleared when starting a new month)
+                </label>
+              </div>
             </div>
 
             <div className="flex gap-4">
@@ -3239,7 +3296,10 @@ function App() {
                 Save Notes for {noteSelectedSection}
               </button>
               <button
-                onClick={() => setShowSectionNotesModal(false)}
+                onClick={() => {
+                  setShowSectionNotesModal(false);
+                  setSaveNoteForNextMonth(false);
+                }}
                 className="px-6 bg-gray-300 text-gray-700 p-3 rounded-lg hover:bg-gray-400"
               >
                 Cancel
