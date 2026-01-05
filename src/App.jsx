@@ -1943,23 +1943,45 @@ function App() {
   };
 
   const clearAllData = async () => {
-    if (window.confirm('Are you sure you want to clear all data? This cannot be undone.')) {
-      // Delete all user's extinguishers from Firestore
+    if (!currentWorkspaceId) {
+      alert('Please select a workspace first.');
+      return;
+    }
+
+    const workspaceLabel = getCurrentWorkspace()?.label || 'current workspace';
+    if (!window.confirm(`Are you sure you want to clear all data for ${workspaceLabel}?\n\nThis will delete all extinguishers and data for this month only. Other months will not be affected.\n\nThis cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      // Delete only extinguishers from the current workspace
       const extinguishersQuery = query(
         collection(db, 'extinguishers'),
-        where('userId', '==', user.uid)
+        where('userId', '==', user.uid),
+        where('workspaceId', '==', currentWorkspaceId)
       );
 
       const snapshot = await getDocs(extinguishersQuery);
+      
+      if (snapshot.docs.length === 0) {
+        alert('No data found to clear in this workspace.');
+        return;
+      }
+
       const deletePromises = snapshot.docs.map(doc => deleteDoc(doc.ref));
       await Promise.all(deletePromises);
 
-      // Clear local data
-      localStorage.removeItem(`sessionState_${user.uid}`);
-      localStorage.removeItem(`sectionTimes_${user.uid}`);
+      // Clear local data for this workspace only
+      localStorage.removeItem(`sessionState_${user.uid}_${currentWorkspaceId}`);
+      localStorage.removeItem(`sectionTimes_${user.uid}_${currentWorkspaceId}`);
       setSelectedItem(null);
       setEditItem(null);
       setSectionTimes({});
+
+      alert(`Successfully cleared all data for ${workspaceLabel}.\n\n${snapshot.docs.length} extinguishers deleted.`);
+    } catch (error) {
+      console.error('Error clearing data:', error);
+      alert(`Error clearing data: ${error.message}`);
     }
   };
 
