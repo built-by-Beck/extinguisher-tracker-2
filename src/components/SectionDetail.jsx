@@ -1,8 +1,8 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Info } from 'lucide-react';
+import { Info, RotateCcw } from 'lucide-react';
 
-export default function SectionDetail({ extinguishers, onSelectItem, getViewMode, toggleView, countsFor, onPass, onFail, onEdit, onSaveNotes }) {
+export default function SectionDetail({ extinguishers, onSelectItem, getViewMode, toggleView, countsFor, onPass, onFail, onEdit, onSaveNotes, onReplace }) {
   const { name } = useParams();
   const navigate = useNavigate();
   const section = decodeURIComponent(name || '');
@@ -32,6 +32,9 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
   const [photoPreview, setPhotoPreview] = useState('');
   const [gps, setGps] = useState(null);
   const [gpsLoading, setGpsLoading] = useState(false);
+  const [notesSaving, setNotesSaving] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
+  const notesSaveTimeoutRef = useRef(null);
 
   useEffect(() => {
     const persisted = localStorage.getItem(`sectionView_${section}`);
@@ -41,6 +44,41 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
   useEffect(() => {
     if (scanRef.current) scanRef.current.focus();
   }, [section]);
+
+  // Auto-save notes with debouncing
+  useEffect(() => {
+    if (!activeItem || !notes) return;
+    
+    // Clear existing timeout
+    if (notesSaveTimeoutRef.current) {
+      clearTimeout(notesSaveTimeoutRef.current);
+    }
+
+    // Set new timeout for debounced save
+    notesSaveTimeoutRef.current = setTimeout(async () => {
+      if (activeItem && notes !== (activeItem.notes || '')) {
+        setNotesSaving(true);
+        setNotesSaved(false);
+        try {
+          const inspectionData = { checklistData: checklist, notes, photo: photoFile || null, gps: gps || null };
+          await onSaveNotes?.(activeItem, notes, inspectionData);
+          setNotesSaved(true);
+          setTimeout(() => setNotesSaved(false), 2000); // Hide "Saved" message after 2s
+        } catch (error) {
+          console.error('Auto-save failed:', error);
+        } finally {
+          setNotesSaving(false);
+        }
+      }
+    }, 2000); // 2 second debounce
+
+    // Cleanup on unmount or when activeItem/notes changes
+    return () => {
+      if (notesSaveTimeoutRef.current) {
+        clearTimeout(notesSaveTimeoutRef.current);
+      }
+    };
+  }, [notes, activeItem, checklist, photoFile, gps, onSaveNotes]);
 
   const items = useMemo(() => {
     const normalizeStatus = (s) => String(s || '').toLowerCase();
@@ -417,8 +455,39 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
 
             {/* Notes & Photos */}
             <div className="mb-4">
-              <h4 className="font-semibold text-md mb-2 text-gray-700 border-b pb-1">Notes & Photos</h4>
-              <textarea className="w-full border rounded p-3 text-sm mb-3" rows={6} value={notes} onChange={(e)=>setNotes(e.target.value)} placeholder="Enter any additional notes or observations about the extinguisher or its location..." />
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-semibold text-md text-gray-700 border-b pb-1">Notes & Photos</h4>
+                {notesSaving && (
+                  <span className="text-xs text-blue-600">Saving...</span>
+                )}
+                {notesSaved && !notesSaving && (
+                  <span className="text-xs text-green-600">Saved</span>
+                )}
+              </div>
+              <textarea
+                className="w-full border rounded p-3 text-sm mb-3"
+                rows={6}
+                value={notes}
+                onChange={(e)=>setNotes(e.target.value)}
+                onBlur={async () => {
+                  // Save immediately on blur
+                  if (activeItem && notes !== (activeItem.notes || '')) {
+                    setNotesSaving(true);
+                    setNotesSaved(false);
+                    try {
+                      const inspectionData = { checklistData: checklist, notes, photo: photoFile || null, gps: gps || null };
+                      await onSaveNotes?.(activeItem, notes, inspectionData);
+                      setNotesSaved(true);
+                      setTimeout(() => setNotesSaved(false), 2000);
+                    } catch (error) {
+                      console.error('Auto-save on blur failed:', error);
+                    } finally {
+                      setNotesSaving(false);
+                    }
+                  }
+                }}
+                placeholder="Enter any additional notes or observations about the extinguisher or its location... (auto-saves)"
+              />
               <div className="flex items-center gap-3">
                 <label className="px-3 py-2 border rounded cursor-pointer bg-slate-50">
                   <span>Add Photo</span>
@@ -475,13 +544,11 @@ export default function SectionDetail({ extinguishers, onSelectItem, getViewMode
               {/* Always allow edit and saving notes */}
               <button onClick={() => { onEdit?.(activeItem); }} className="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300">Edit</button>
               <button
-                onClick={() => {
-                  const inspectionData = { checklistData: checklist, notes, photo: photoFile || null, gps: gps || null };
-                  onSaveNotes?.(activeItem, checklistSummary(), inspectionData);
-                }}
-                className="px-4 py-2 rounded bg-slate-200 hover:bg-slate-300"
+                onClick={() => { onReplace?.(activeItem); }}
+                className="px-4 py-2 rounded bg-orange-600 text-white hover:bg-orange-700 flex items-center gap-2"
               >
-                Save Notes
+                <RotateCcw size={16} />
+                Replace
               </button>
 
               {/* Only show Pass/Fail when item is still pending in this workspace (month) */}

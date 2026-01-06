@@ -77,6 +77,7 @@ The Fire Extinguisher Tracker is a full-featured inspection management system th
 - **Per-section statistics**: Pending, passed, and failed counts
 - **Smart sorting**: Automatic organization by floor and room number for efficient walking routes
 - **Section notes**: Add persistent notes per section (stored in Firestore)
+- **Save notes for next month**: Option to preserve section notes when creating new workspace
 
 ### ⏱️ Time Tracking System
 - **Per-section timers** with start/pause/stop controls
@@ -88,7 +89,8 @@ The Fire Extinguisher Tracker is a full-featured inspection management system th
 - **Workspace-scoped**: Each inspection month has its own time tracking data
 
 ### 📱 Dual Barcode Scanning
-- **Camera-based scanning**: Uses device camera with BarcodeDetector API
+- **Camera-based scanning**: Uses device camera with native BarcodeDetector API
+- **Polyfill support**: `@undecaf/barcode-detector-polyfill` for browsers without native support
 - **Manual entry mode**: Keyboard input for handheld scanners or manual lookup
 - **Multi-format support**: Code 128, QR codes, Data Matrix, and more
 - **Instant asset lookup**: Immediate navigation to scanned extinguisher
@@ -103,7 +105,7 @@ The Fire Extinguisher Tracker is a full-featured inspection management system th
 - **Seamless integration**: Works within the app interface
 
 ### 📊 Comprehensive Data Management
-- **Excel/CSV Import**: Bulk upload with automatic section assignment
+- **Excel/CSV Import**: Bulk upload with automatic section assignment (admin only)
 - **Section-specific imports**: Assign all imported items to a chosen section
 - **Export options**:
   - **All data**: Complete inventory with full checklist details
@@ -111,8 +113,10 @@ The Fire Extinguisher Tracker is a full-featured inspection management system th
   - **Failed items only**: Maintenance work orders
   - **Time tracking report**: Labor hours by section with item counts
 - **Checklist data in exports**: Full pass/fail status for each inspection point
-- **Database backup (JSON)**: Full export/import of all collections
+- **Database backup (JSON)**: Full export/import of all collections (extinguishers, sectionNotes, inspectionLogs)
 - **Database export (CSV)**: Importer-friendly format for data migration
+- **Device sync**: Export sync file from one device, import on another to transfer workspace data
+- **Auto-backup system**: Automatic daily backups to localStorage (last 7 days retained)
 
 ### 🔄 Monthly Inspection Cycle Management
 - **Multi-month workspaces**: Maintain separate data for each inspection month
@@ -135,10 +139,39 @@ The Fire Extinguisher Tracker is a full-featured inspection management system th
 ### 👨‍💼 Admin Mode
 - **Protected database operations**: Toggle admin mode for sensitive actions
 - **Import controls**: Restrict bulk data imports to admins
-- **Add new assets**: Create individual fire extinguisher records
-- **Edit asset details**: Modify Asset ID, Serial, Location, Section, GPS
+- **Add new assets**: Create individual fire extinguisher records with category (standard/spare/replaced)
+- **Edit asset details**: Modify Asset ID, Serial, Location, Section, GPS, Category, Photos
 - **Delete extinguishers**: Remove obsolete or duplicate assets
 - **Clear all data**: Nuclear option for complete database reset (with confirmation)
+- **Duplicate cleanup**: Scan and merge duplicate records by Asset ID (preserves histories and photos)
+- **Database backup/restore**: Export full database as JSON, import to restore
+- **Replace extinguisher**: Track replacement history when extinguishers are replaced
+
+### 🔄 Asset Replacement & Categories
+- **Replace extinguisher**: When an extinguisher is replaced, create new record and preserve old record with replacement history
+- **Replacement tracking**: Full history of replacements (date, old/new serial, reason, manufacture date, notes)
+- **Category system**: Track extinguishers as 'standard', 'spare', or 'replaced'
+- **Quick lists**: View all spare or replaced extinguishers across sections
+- **Replacement history**: Each asset maintains complete replacement chain
+
+### 🔍 Duplicate Detection & Cleanup
+- **Automatic detection**: Scan for duplicate records by Asset ID
+- **Smart merging**: Automatically merges inspection histories, photos, and GPS data
+- **Preference logic**: Keeps most recently checked record, preserves non-pending status
+- **Batch cleanup**: Review and merge multiple duplicate groups at once
+- **Safe operation**: Only removes duplicates after explicit confirmation
+
+### 📱 Device Sync
+- **Export sync file**: Create portable sync file from current workspace
+- **Import sync file**: Transfer workspace data from one device to another
+- **Cross-device compatibility**: Works between phones, tablets, and computers
+- **Workspace transfer**: Syncs extinguisher data, section notes, and workspace configuration
+
+### 💾 Auto-Backup System
+- **Automatic daily backups**: System automatically backs up data to localStorage once per day
+- **Last 7 days retained**: Keeps backups for the past week
+- **Manual restore**: Access backups through admin menu if needed
+- **Workspace-scoped**: Backups include current workspace data
 
 ### 📈 Real-Time Dashboard
 - **Global statistics**: Total pending, passed, failed, and completion percentage
@@ -149,12 +182,15 @@ The Fire Extinguisher Tracker is a full-featured inspection management system th
 - **Workspace indicator**: Current inspection month always visible
 
 ### 💾 Data Persistence
-- **Firebase Firestore**: Primary cloud database storage
-- **Real-time sync**: Automatic data synchronization via onSnapshot listeners
-- **User isolation**: Data scoped by Firebase user ID
-- **Workspace isolation**: Data scoped by workspace/month
-- **Session state**: UI preferences saved to localStorage
-- **Offline support**: Local timer data with cloud sync capability
+- **Firebase Firestore**: Primary cloud database storage with offline persistence (IndexedDB caching)
+- **Real-time sync**: Automatic data synchronization via onSnapshot listeners across all devices
+- **User isolation**: Data scoped by Firebase user ID (users only see their own data)
+- **Workspace isolation**: Data scoped by workspace/month (each inspection cycle is independent)
+- **Session state**: UI preferences (filters, view modes) saved to localStorage per user
+- **Time tracking**: Stored in localStorage per workspace for offline capability
+- **Auto-backup**: Daily automatic backups to localStorage (last 7 days retained)
+- **Firebase Storage**: Cloud storage for photos (assets and inspections folders)
+- **Firebase Analytics**: Usage tracking and analytics integration
 
 ### 🌐 Marketing Website
 - **Landing page**: Public homepage with feature highlights
@@ -171,12 +207,13 @@ The Fire Extinguisher Tracker is a full-featured inspection management system th
 - **Build Tool**: Vite (with Hot Module Replacement)
 - **Styling**: Tailwind CSS with responsive design
 - **Icons**: Lucide React icon library
-- **Backend**: Firebase (Authentication, Firestore, Storage)
+- **Backend**: Firebase (Authentication, Firestore, Storage, Analytics)
 - **Data Processing**: XLSX (SheetJS) for Excel/CSV import/export
 - **State Management**: React hooks with Firestore real-time listeners
-- **Barcode Scanning**: Native BarcodeDetector API with polyfill fallback
+- **Barcode Scanning**: Native BarcodeDetector API with `@undecaf/barcode-detector-polyfill` fallback
 - **Geolocation**: Native browser Geolocation API with high accuracy mode
 - **Advertising**: Google AdSense for marketing pages
+- **Offline Persistence**: Firestore IndexedDB persistence for offline reads and queued writes
 
 ## Data Structure
 
@@ -202,6 +239,7 @@ The Fire Extinguisher Tracker is a full-featured inspection management system th
   vicinity: "Near elevator bank",
   parentLocation: "2nd Floor East Wing",
   section: "Main Hospital",
+  category: "standard" | "spare" | "replaced",
   status: "pending" | "pass" | "fail",
   checkedDate: "2025-10-10T14:30:00Z",
   notes: "Pressure gauge in green zone",
@@ -265,7 +303,22 @@ The Fire Extinguisher Tracker is a full-featured inspection management system th
     }
   ],
 
-  lastMonthlyReset: "2025-10-01T00:00:00Z"
+  // Replacement history (when extinguisher was replaced)
+  replacementHistory: [
+    {
+      date: "2025-08-15T10:00:00Z",
+      oldSerial: "SN123456",
+      newSerial: "SN789012",
+      reason: "Expired",
+      newManufactureDate: "2025",
+      notes: "Replaced due to expiration",
+      replacedBy: "user@example.com",
+      oldAssetId: "FE-12345",
+      newExtinguisherId: "firestore-document-id"
+    }
+  ],
+
+  createdAt: "2025-10-01T08:00:00Z"
 }
 ```
 
@@ -452,7 +505,7 @@ npm run dev
 1. **Edit Asset Details**:
    - Open asset inspection modal
    - Click "Edit Extinguisher Details"
-   - Update Asset ID, Serial, Location, Section, GPS, or Photos
+   - Update Asset ID, Serial, Location, Section, Category, GPS, or Photos
    - Click "Save Changes"
 
 2. **Delete Asset** (admin only):
@@ -464,9 +517,24 @@ npm run dev
    - Enable admin mode
    - Click menu -> "Add New Fire Extinguisher"
    - Fill in Asset ID (required), Serial, Vicinity, Parent Location
-   - Select Section
+   - Select Section and Category (standard/spare/replaced)
    - Optionally add photo and GPS
    - Click "Add Fire Extinguisher"
+
+4. **Replace Extinguisher**:
+   - Open asset inspection modal
+   - Click "Replace Extinguisher"
+   - Enter new Serial Number (required, must be different from old)
+   - Optionally enter reason, manufacture date, notes
+   - Click "Replace"
+   - New extinguisher record created, old record preserved with replacement history
+
+5. **Duplicate Cleanup** (admin only):
+   - Enable admin mode
+   - Click menu -> "Duplicate Cleanup"
+   - System scans for duplicates by Asset ID
+   - Review duplicate groups and merge options
+   - Confirm to merge histories/photos and remove duplicates
 
 ### Using the Calculator
 
@@ -511,6 +579,24 @@ npm run dev
 - **Export importer-friendly CSV**: Menu -> Admin -> "Export Database (CSV)"
   - Columns: Asset ID, Serial, Vicinity, Parent Location, Section
   - This CSV can be imported directly using "Import Data File"
+
+### Device Sync
+
+- **Export sync file**: Menu -> "Export Sync File"
+  - Creates a portable file with current workspace data
+  - Includes extinguishers, section notes, and workspace configuration
+  - Transfer file to another device via email, cloud storage, etc.
+- **Import sync file**: Menu -> "Import Sync File"
+  - Loads workspace data from sync file
+  - Replaces current workspace data (confirms before proceeding)
+  - Useful for syncing between phone and computer
+
+### Auto-Backup System
+
+- **Automatic daily backups**: System automatically backs up data to localStorage once per day
+- **Last 7 days retained**: Keeps backups for the past week
+- **Manual restore**: Access backups through admin menu if needed
+- **Workspace-scoped**: Backups include current workspace data
 
 ## Development
 

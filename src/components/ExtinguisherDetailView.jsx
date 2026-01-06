@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, MapPin, Calendar, CheckCircle, XCircle, Circle, Image as ImageIcon, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
+import { ArrowLeft, MapPin, Calendar, CheckCircle, XCircle, Circle, Image as ImageIcon, ChevronDown, ChevronUp, ExternalLink, RotateCcw } from 'lucide-react';
 
 /**
  * ExtinguisherDetailView - Full-page view showing all information about a fire extinguisher
@@ -407,6 +407,78 @@ const ExtinguisherDetailView = ({ extinguishers }) => {
             </div>
           )}
         </div>
+
+        {/* Replacement History */}
+        {extinguisher.replacementHistory && extinguisher.replacementHistory.length > 0 && (
+          <div className="bg-gray-800/50 backdrop-blur rounded-lg p-6 border border-gray-700">
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <RotateCcw size={24} />
+              Replacement History ({extinguisher.replacementHistory.length})
+            </h2>
+
+            <div className="space-y-3">
+              {extinguisher.replacementHistory.map((replacement, index) => (
+                <div
+                  key={index}
+                  className="bg-orange-900/30 border border-orange-700 rounded-lg p-4"
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <RotateCcw size={18} className="text-orange-400" />
+                    <span className="font-bold text-orange-400">REPLACED</span>
+                    <span className="text-gray-400 text-sm">• {formatDate(replacement.date)}</span>
+                  </div>
+
+                  <div className="space-y-2 text-sm">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <span className="text-gray-400">Old Serial:</span>
+                        <span className="text-gray-200 ml-2">{replacement.oldSerial || 'N/A'}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">New Serial:</span>
+                        <span className="text-green-300 ml-2 font-semibold">{replacement.newSerial || 'N/A'}</span>
+                      </div>
+                    </div>
+
+                    {replacement.oldAssetId && replacement.oldAssetId !== extinguisher.assetId && (
+                      <div>
+                        <span className="text-gray-400">Old Asset ID:</span>
+                        <span className="text-gray-200 ml-2">{replacement.oldAssetId}</span>
+                      </div>
+                    )}
+
+                    {replacement.newManufactureDate && (
+                      <div>
+                        <span className="text-gray-400">New Manufacture Date:</span>
+                        <span className="text-gray-200 ml-2">{replacement.newManufactureDate}</span>
+                      </div>
+                    )}
+
+                    {replacement.reason && (
+                      <div>
+                        <span className="text-gray-400">Reason:</span>
+                        <span className="text-gray-200 ml-2">{replacement.reason}</span>
+                      </div>
+                    )}
+
+                    {replacement.notes && (
+                      <div>
+                        <span className="text-gray-400">Notes:</span>
+                        <p className="text-gray-300 mt-1 bg-gray-900/50 p-2 rounded">{replacement.notes}</p>
+                      </div>
+                    )}
+
+                    {replacement.replacedBy && (
+                      <div className="text-xs text-gray-500 mt-2">
+                        Replaced by: {replacement.replacedBy}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

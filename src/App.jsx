@@ -42,7 +42,18 @@ function App() {
   const [inspectionLogs, setInspectionLogs] = useState([]);
   const [selectedItem, setSelectedItem] = useState(null);
   const [selectedItemNotes, setSelectedItemNotes] = useState('');
+  const [notesSaving, setNotesSaving] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
+  const notesSaveTimeoutRef = useRef(null);
   const [editItem, setEditItem] = useState(null);
+  const [replaceItem, setReplaceItem] = useState(null);
+  const [replaceForm, setReplaceForm] = useState({
+    assetId: '',
+    serial: '',
+    reason: '',
+    manufactureDate: '',
+    notes: ''
+  });
   const [showMenu, setShowMenu] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [importSection, setImportSection] = useState('Main Hospital');
@@ -843,7 +854,42 @@ function App() {
   // Keep the modal notes field in sync with the selected item
   useEffect(() => {
     setSelectedItemNotes(selectedItem?.notes || '');
+    setNotesSaved(false);
   }, [selectedItem]);
+
+  // Auto-save notes with debouncing
+  useEffect(() => {
+    if (!selectedItem || !selectedItemNotes) return;
+    
+    // Clear existing timeout
+    if (notesSaveTimeoutRef.current) {
+      clearTimeout(notesSaveTimeoutRef.current);
+    }
+
+    // Set new timeout for debounced save
+    notesSaveTimeoutRef.current = setTimeout(async () => {
+      if (selectedItem && selectedItemNotes !== (selectedItem.notes || '')) {
+        setNotesSaving(true);
+        setNotesSaved(false);
+        try {
+          await handleSaveNotes(selectedItem, selectedItemNotes);
+          setNotesSaved(true);
+          setTimeout(() => setNotesSaved(false), 2000); // Hide "Saved" message after 2s
+        } catch (error) {
+          console.error('Auto-save failed:', error);
+        } finally {
+          setNotesSaving(false);
+        }
+      }
+    }, 2000); // 2 second debounce
+
+    // Cleanup on unmount or when selectedItem changes
+    return () => {
+      if (notesSaveTimeoutRef.current) {
+        clearTimeout(notesSaveTimeoutRef.current);
+      }
+    };
+  }, [selectedItemNotes, selectedItem]);
 
   const saveData = async (newData) => {
     // Firestore handles the state updates through onSnapshot
@@ -1703,6 +1749,100 @@ function App() {
     }
   };
 
+  const handleReplaceExtinguisher = async (oldItem, replacementData) => {
+    try {
+      const { assetId, serial, reason, manufactureDate, notes } = replacementData;
+      
+      if (!serial || !serial.trim()) {
+        alert('Serial number is required for replacement.');
+        return;
+      }
+
+      // Check if serial is different
+      if (serial.trim() === (oldItem.serial || '').trim()) {
+        alert('New serial number must be different from the old serial number.');
+        return;
+      }
+
+      const replacementDate = new Date().toISOString();
+      const replacementRecord = {
+        date: replacementDate,
+        oldSerial: oldItem.serial || '',
+        newSerial: serial.trim(),
+        reason: reason.trim() || '',
+        newManufactureDate: manufactureDate.trim() || '',
+        notes: notes.trim() || '',
+        replacedBy: user?.email || 'Current User',
+        oldAssetId: oldItem.assetId
+      };
+
+      // Create new extinguisher record
+      const newExtinguisherData = {
+        assetId: assetId.trim() || oldItem.assetId,
+        serial: serial.trim(),
+        vicinity: oldItem.vicinity || '',
+        parentLocation: oldItem.parentLocation || '',
+        section: oldItem.section || 'Main Hospital',
+        status: 'pending',
+        checkedDate: null,
+        notes: notes.trim() || '',
+        manufactureYear: manufactureDate.trim() || '',
+        category: oldItem.category || 'standard',
+        location: oldItem.location || null,
+        userId: user.uid,
+        workspaceId: currentWorkspaceId,
+        createdAt: replacementDate,
+        inspectionHistory: [],
+        photos: [],
+        replacementHistory: []
+      };
+
+      const newDocRef = await addDoc(collection(db, 'extinguishers'), newExtinguisherData);
+      replacementRecord.newExtinguisherId = newDocRef.id;
+
+      // Update old extinguisher with replacement history
+      const oldDocRef = doc(db, 'extinguishers', oldItem.id);
+      const oldReplacementHistory = oldItem.replacementHistory || [];
+      await setDoc(oldDocRef, {
+        replacementHistory: [...oldReplacementHistory, replacementRecord]
+      }, { merge: true });
+
+      // Update local state
+      setExtinguishers(prev => {
+        const updated = prev.map(e => {
+          if (e.id === oldItem.id) {
+            return {
+              ...e,
+              replacementHistory: [...oldReplacementHistory, replacementRecord]
+            };
+          }
+          return e;
+        });
+        // Add new extinguisher to local state
+        updated.push({
+          ...newExtinguisherData,
+          id: newDocRef.id
+        });
+        return updated;
+      });
+
+      setReplaceItem(null);
+      setReplaceForm({
+        assetId: '',
+        serial: '',
+        reason: '',
+        manufactureDate: '',
+        notes: ''
+      });
+      setSelectedItem(null);
+      
+      alert(`Extinguisher replaced successfully!\n\nNew extinguisher created with Asset ID: ${newExtinguisherData.assetId}\nSerial: ${serial.trim()}`);
+    } catch (error) {
+      console.error('Error replacing extinguisher:', error);
+      alert(`Error replacing extinguisher: ${error.message}`);
+    }
+  };
+
   const exportData = (options = exportOptions) => {
     const { type, includePhotos, includeGPS, includeChecklist, includeInspectionHistory } = options;
 
@@ -1777,6 +1917,23 @@ function App() {
         baseData['Inspection History'] = item.inspectionHistory.map(h =>
           `${new Date(h.date).toLocaleDateString()} - ${h.status.toUpperCase()}${h.notes ? ': ' + h.notes : ''}`
         ).join(' | ');
+      }
+
+      // Add replacement history if available
+      if (item.replacementHistory && item.replacementHistory.length > 0) {
+        baseData['Replacement History Count'] = item.replacementHistory.length;
+        baseData['Replacement History'] = item.replacementHistory.map(r =>
+          `${new Date(r.date).toLocaleDateString()} - Old Serial: ${r.oldSerial || 'N/A'}, New Serial: ${r.newSerial || 'N/A'}${r.reason ? ', Reason: ' + r.reason : ''}${r.notes ? ', Notes: ' + r.notes : ''}`
+        ).join(' | ');
+        // Add most recent replacement details as separate columns
+        const latestReplacement = item.replacementHistory[item.replacementHistory.length - 1];
+        baseData['Last Replacement Date'] = latestReplacement.date ? new Date(latestReplacement.date).toLocaleDateString() : '';
+        baseData['Last Replacement Old Serial'] = latestReplacement.oldSerial || '';
+        baseData['Last Replacement New Serial'] = latestReplacement.newSerial || '';
+        baseData['Last Replacement Reason'] = latestReplacement.reason || '';
+        baseData['Last Replacement Manufacture Date'] = latestReplacement.newManufactureDate || '';
+        baseData['Last Replacement Notes'] = latestReplacement.notes || '';
+        baseData['Last Replaced By'] = latestReplacement.replacedBy || '';
       }
 
       return baseData;
@@ -2095,6 +2252,16 @@ function App() {
   // helpers for SectionDetail actions
   const handlePass = (item, notesSummary = '', inspectionData = null) => handleInspection(item, 'pass', notesSummary, inspectionData);
   const handleFail = (item, notesSummary = '', inspectionData = null) => handleInspection(item, 'fail', notesSummary, inspectionData);
+  const handleOpenReplace = (item) => {
+    setReplaceItem(item);
+    setReplaceForm({
+      assetId: item.assetId || '',
+      serial: '',
+      reason: '',
+      manufactureDate: '',
+      notes: ''
+    });
+  };
   const handleSaveNotes = async (item, notesSummary, inspectionData = null) => {
     try {
       let photoUrl = null;
@@ -2481,12 +2648,12 @@ function App() {
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap w-full sm:w-auto justify-end">
+            <div className="flex items-center gap-1 sm:gap-1.5 sm:gap-2 flex-nowrap w-full sm:w-auto justify-end min-w-0">
               <span className="text-xs text-gray-400 hidden sm:inline">Logged in as:</span>
-              <span className="text-xs sm:text-sm text-white truncate max-w-[120px] sm:max-w-none">{user.email}</span>
+              <span className="text-xs sm:text-sm text-white truncate max-w-[60px] sm:max-w-none hidden min-[380px]:inline">{user.email}</span>
               <button
                 onClick={() => navigate('/app/calculator')}
-                className="px-2 sm:px-3 py-1.5 sm:py-2 bg-red-600 hover:bg-red-700 text-white rounded flex items-center gap-1 sm:gap-2 text-xs sm:text-sm"
+                className="px-2 sm:px-3 py-1.5 sm:py-2 bg-red-600 hover:bg-red-700 text-white rounded flex items-center gap-1 sm:gap-2 text-xs sm:text-sm flex-shrink-0"
                 title="Open Fire Extinguisher Calculator"
               >
                 <CalculatorIcon size={16} className="sm:w-[18px] sm:h-[18px]" />
@@ -2494,21 +2661,21 @@ function App() {
               </button>
               <button
                 onClick={() => setAdminMode(!adminMode)}
-                className={`p-1.5 sm:p-2 hover:bg-gray-600 rounded flex items-center gap-1 sm:gap-2 ${adminMode ? 'bg-gray-600' : ''}`}
+                className={`p-1.5 sm:p-2 hover:bg-gray-600 rounded flex items-center gap-1 sm:gap-2 flex-shrink-0 ${adminMode ? 'bg-gray-600' : ''}`}
                 title={adminMode ? 'Exit Admin Mode' : 'Admin Mode'}
               >
                 <Settings size={18} className="sm:w-[18px] sm:h-[18px]" />
               </button>
               <button
                 onClick={handleLogout}
-                className="p-1.5 sm:p-2 hover:bg-gray-600 rounded flex items-center gap-1 sm:gap-2"
+                className="p-1.5 sm:p-2 hover:bg-gray-600 rounded flex items-center gap-1 sm:gap-2 flex-shrink-0"
                 title="Logout"
               >
                 <LogOut size={18} className="sm:w-[18px] sm:h-[18px]" />
               </button>
               <button
                 onClick={() => setShowMenu(!showMenu)}
-                className="p-1.5 sm:p-2 hover:bg-gray-600 rounded flex items-center"
+                className="p-1.5 sm:p-2 hover:bg-gray-600 rounded flex items-center flex-shrink-0"
                 title="Menu"
               >
                 <Menu size={20} className="sm:w-[20px] sm:h-[20px]" />
@@ -3162,6 +3329,7 @@ function App() {
                   onFail={handleFail}
                   onEdit={handleEdit}
                   onSaveNotes={handleSaveNotes}
+                  onReplace={handleOpenReplace}
                 />
               }
             />
@@ -3777,24 +3945,40 @@ function App() {
             {/* Notes always visible */}
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Notes
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-gray-300">
+                    Notes
+                  </label>
+                  {notesSaving && (
+                    <span className="text-xs text-blue-400">Saving...</span>
+                  )}
+                  {notesSaved && !notesSaving && (
+                    <span className="text-xs text-green-400">Saved</span>
+                  )}
+                </div>
                 <textarea
                   rows="3"
                   value={selectedItemNotes}
                   onChange={(e) => setSelectedItemNotes(e.target.value)}
+                  onBlur={async () => {
+                    // Save immediately on blur
+                    if (selectedItem && selectedItemNotes !== (selectedItem.notes || '')) {
+                      setNotesSaving(true);
+                      setNotesSaved(false);
+                      try {
+                        await handleSaveNotes(selectedItem, selectedItemNotes);
+                        setNotesSaved(true);
+                        setTimeout(() => setNotesSaved(false), 2000);
+                      } catch (error) {
+                        console.error('Auto-save on blur failed:', error);
+                      } finally {
+                        setNotesSaving(false);
+                      }
+                    }
+                  }}
                   className="w-full p-3 border border-gray-600 rounded-lg bg-gray-700 text-white placeholder-gray-400 focus:ring-2 focus:ring-red-500 focus:border-red-500"
-                  placeholder="Add any notes about this extinguisher..."
+                  placeholder="Add any notes about this extinguisher... (auto-saves)"
                 />
-                <div className="mt-3 flex gap-2">
-                  <button
-                    onClick={() => handleSaveNotes(selectedItem, selectedItemNotes)}
-                    className="bg-slate-600 text-white px-4 py-2 rounded-lg hover:bg-slate-700 font-semibold transition shadow"
-                  >
-                    Save Notes
-                  </button>
-                </div>
               </div>
 
               {selectedItem.status === 'pending' && (
@@ -3821,13 +4005,29 @@ function App() {
               )}
             </div>
 
-            <div className="mt-4 pt-4 border-t border-gray-700">
+            <div className="mt-4 pt-4 border-t border-gray-700 space-y-2">
               <button
                 onClick={() => handleEdit(selectedItem)}
                 className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 font-semibold transition shadow-lg"
               >
                 <Edit2 size={20} />
                 Edit Extinguisher Details
+              </button>
+              <button
+                onClick={() => {
+                  setReplaceItem(selectedItem);
+                  setReplaceForm({
+                    assetId: selectedItem.assetId || '',
+                    serial: '',
+                    reason: '',
+                    manufactureDate: '',
+                    notes: ''
+                  });
+                }}
+                className="w-full bg-orange-600 text-white p-3 rounded-lg hover:bg-orange-700 flex items-center justify-center gap-2 font-semibold transition shadow-lg"
+              >
+                <RotateCcw size={20} />
+                Replace Extinguisher
               </button>
             </div>
           </div>
@@ -4020,6 +4220,147 @@ function App() {
                   Cancel
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Replace Extinguisher Modal */}
+      {replaceItem && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full my-8">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">Replace Fire Extinguisher</h3>
+              <button onClick={() => {
+                setReplaceItem(null);
+                setReplaceForm({
+                  assetId: '',
+                  serial: '',
+                  reason: '',
+                  manufactureDate: '',
+                  notes: ''
+                });
+              }}>
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
+                <p className="text-sm text-yellow-800">
+                  <strong>Replacing:</strong> Asset #{replaceItem.assetId} • Serial: {replaceItem.serial || 'N/A'}
+                </p>
+                <p className="text-xs text-yellow-700 mt-1">
+                  A new extinguisher record will be created. The old extinguisher will retain all history.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Asset ID <span className="text-gray-500">(pre-filled, editable)</span>
+                </label>
+                <input
+                  type="text"
+                  value={replaceForm.assetId}
+                  onChange={(e) => setReplaceForm({...replaceForm, assetId: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="Enter asset ID"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  New Serial Number <span className="text-red-600">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={replaceForm.serial}
+                  onChange={(e) => setReplaceForm({...replaceForm, serial: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="Enter new serial number (must be different)"
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">Old serial: {replaceItem.serial || 'N/A'}</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Reason for Replacement
+                </label>
+                <input
+                  type="text"
+                  value={replaceForm.reason}
+                  onChange={(e) => setReplaceForm({...replaceForm, reason: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="e.g., 6-year NFPA maintenance replacement"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Manufacture Date of New Extinguisher
+                </label>
+                <input
+                  type="text"
+                  value={replaceForm.manufactureDate}
+                  onChange={(e) => setReplaceForm({...replaceForm, manufactureDate: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="e.g., 2025"
+                />
+                <p className="text-xs text-gray-500 mt-1">Enter manufacture year, 6-year maintenance, or hydrostatic test date</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Notes
+                </label>
+                <textarea
+                  rows="4"
+                  value={replaceForm.notes}
+                  onChange={(e) => setReplaceForm({...replaceForm, notes: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                  placeholder="Enter any additional notes about the replacement..."
+                />
+              </div>
+
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <p className="text-xs text-gray-600">
+                  <strong>Note:</strong> The replacement will be timestamped automatically. The old extinguisher will keep all inspection history, photos, and notes.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-4 pt-4 mt-6">
+              <button
+                onClick={() => {
+                  if (!replaceForm.serial || !replaceForm.serial.trim()) {
+                    alert('Serial number is required.');
+                    return;
+                  }
+                  if (window.confirm(`Replace extinguisher ${replaceItem.assetId}?\n\nNew serial: ${replaceForm.serial}\n\nThis will create a new extinguisher record.`)) {
+                    handleReplaceExtinguisher(replaceItem, replaceForm);
+                  }
+                }}
+                className="flex-1 bg-orange-600 text-white p-3 rounded-lg hover:bg-orange-700 flex items-center justify-center gap-2 font-semibold"
+              >
+                <RotateCcw size={20} />
+                Replace Extinguisher
+              </button>
+              <button
+                onClick={() => {
+                  setReplaceItem(null);
+                  setReplaceForm({
+                    assetId: '',
+                    serial: '',
+                    reason: '',
+                    manufactureDate: '',
+                    notes: ''
+                  });
+                }}
+                className="px-4 bg-gray-300 text-gray-700 p-3 rounded-lg hover:bg-gray-400"
+              >
+                Cancel
+              </button>
             </div>
           </div>
         </div>
