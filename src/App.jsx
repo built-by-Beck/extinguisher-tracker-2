@@ -2648,35 +2648,39 @@ function App() {
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-1 sm:gap-1.5 sm:gap-2 flex-nowrap w-full sm:w-auto justify-end min-w-0">
+            <div className="flex items-center gap-1 sm:gap-1.5 sm:gap-2 flex-nowrap justify-end min-w-0 w-full sm:w-auto overflow-visible">
               <span className="text-xs text-gray-400 hidden sm:inline">Logged in as:</span>
-              <span className="text-xs sm:text-sm text-white truncate max-w-[60px] sm:max-w-none hidden min-[380px]:inline">{user.email}</span>
+              <span className="text-xs sm:text-sm text-white truncate max-w-[50px] sm:max-w-none hidden min-[400px]:inline">{user.email}</span>
               <button
                 onClick={() => navigate('/app/calculator')}
-                className="px-2 sm:px-3 py-1.5 sm:py-2 bg-red-600 hover:bg-red-700 text-white rounded flex items-center gap-1 sm:gap-2 text-xs sm:text-sm flex-shrink-0"
+                className="px-2 sm:px-3 py-1.5 sm:py-2 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white rounded flex items-center gap-1 sm:gap-2 text-xs sm:text-sm flex-shrink-0"
                 title="Open Fire Extinguisher Calculator"
+                style={{ minWidth: '44px', minHeight: '44px', WebkitTapHighlightColor: 'rgba(0,0,0,0.1)', touchAction: 'manipulation' }}
               >
                 <CalculatorIcon size={16} className="sm:w-[18px] sm:h-[18px]" />
                 <span className="hidden sm:inline">Calculator</span>
               </button>
               <button
                 onClick={() => setAdminMode(!adminMode)}
-                className={`p-1.5 sm:p-2 hover:bg-gray-600 rounded flex items-center gap-1 sm:gap-2 flex-shrink-0 ${adminMode ? 'bg-gray-600' : ''}`}
+                className={`p-1.5 sm:p-2 hover:bg-gray-600 active:bg-gray-700 rounded flex items-center justify-center gap-1 sm:gap-2 flex-shrink-0 ${adminMode ? 'bg-gray-600' : ''}`}
                 title={adminMode ? 'Exit Admin Mode' : 'Admin Mode'}
+                style={{ minWidth: '44px', minHeight: '44px', WebkitTapHighlightColor: 'rgba(0,0,0,0.1)', touchAction: 'manipulation' }}
               >
                 <Settings size={18} className="sm:w-[18px] sm:h-[18px]" />
               </button>
               <button
                 onClick={handleLogout}
-                className="p-1.5 sm:p-2 hover:bg-gray-600 rounded flex items-center gap-1 sm:gap-2 flex-shrink-0"
+                className="p-1.5 sm:p-2 hover:bg-gray-600 active:bg-gray-700 rounded flex items-center justify-center gap-1 sm:gap-2 flex-shrink-0"
                 title="Logout"
+                style={{ minWidth: '44px', minHeight: '44px', WebkitTapHighlightColor: 'rgba(0,0,0,0.1)', touchAction: 'manipulation' }}
               >
                 <LogOut size={18} className="sm:w-[18px] sm:h-[18px]" />
               </button>
               <button
                 onClick={() => setShowMenu(!showMenu)}
-                className="p-1.5 sm:p-2 hover:bg-gray-600 rounded flex items-center flex-shrink-0"
+                className="p-1.5 sm:p-2 hover:bg-gray-600 active:bg-gray-700 rounded flex items-center justify-center flex-shrink-0"
                 title="Menu"
+                style={{ minWidth: '44px', minHeight: '44px', WebkitTapHighlightColor: 'rgba(0,0,0,0.1)', touchAction: 'manipulation' }}
               >
                 <Menu size={20} className="sm:w-[20px] sm:h-[20px]" />
               </button>
