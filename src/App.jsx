@@ -408,7 +408,17 @@ function App() {
           chooseCurr = currCreated >= prevCreated;
         }
 
-        if (chooseCurr) byAsset.set(key, it);
+        // Merge replacement history from both sides so we don't lose events
+        const mergedHistory = [
+          ...(Array.isArray(prev.replacementHistory) ? prev.replacementHistory : []),
+          ...(Array.isArray(it.replacementHistory) ? it.replacementHistory : []),
+        ];
+
+        if (chooseCurr) {
+          byAsset.set(key, { ...it, replacementHistory: mergedHistory });
+        } else {
+          byAsset.set(key, { ...prev, replacementHistory: mergedHistory });
+        }
       }
       return Array.from(byAsset.values());
     };
@@ -3029,7 +3039,7 @@ function App() {
                 View Spares
               </button>
               <button
-                onClick={() => setShowCategoryList({ category: 'replaced' })}
+                onClick={() => setShowCategoryList({ category: 'replaced', mode: 'today' })}
                 className="flex items-center gap-2 px-4 py-2 bg-amber-500 text-white rounded hover:bg-amber-600 transition w-full"
               >
                 <History size={20} />
@@ -3171,13 +3181,103 @@ function App() {
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
             <div className="bg-white rounded-lg p-6 max-w-3xl w-full my-8">
               <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-bold capitalize">{showCategoryList.category} Extinguishers</h3>
+                <h3 className="text-xl font-bold capitalize">
+                  {showCategoryList.category === 'replaced' && showCategoryList.mode === 'today'
+                    ? 'Replacements Today'
+                    : `${showCategoryList.category} Extinguishers`}
+                </h3>
                 <button onClick={() => setShowCategoryList(null)}>
                   <X size={24} />
                 </button>
               </div>
+              {/* Controls specific to Replaced list */}
+              {showCategoryList.category === 'replaced' && (
+                <div className="flex items-center gap-3 mb-4">
+                  <label className="text-sm text-gray-700">Show:</label>
+                  <select
+                    value={showCategoryList.mode || 'today'}
+                    onChange={(e) => setShowCategoryList(prev => ({ ...prev, mode: e.target.value }))}
+                    className="p-2 border rounded"
+                  >
+                    <option value="today">Today</option>
+                    <option value="all">All-time</option>
+                  </select>
+                </div>
+              )}
               <div className="max-h-[70vh] overflow-y-auto">
                 {(() => {
+                  // Special handling for 'replaced' quick list to show only replacements done today
+                  if (showCategoryList.category === 'replaced') {
+                    const now = new Date();
+                    const isSameLocalDay = (iso) => {
+                      if (!iso) return false;
+                      const d = new Date(iso);
+                      return d.getFullYear() === now.getFullYear() &&
+                        d.getMonth() === now.getMonth() &&
+                        d.getDate() === now.getDate();
+                    };
+
+                    // Build a map for quick lookup of new extinguisher by id
+                    const byId = new Map(extinguishers.map(e => [e.id, e]));
+
+                    // Collect replacement events that happened today and resolve to new extinguisher items
+                    const replacementsToday = [];
+                    for (const oldItem of extinguishers) {
+                      const history = Array.isArray(oldItem.replacementHistory) ? oldItem.replacementHistory : [];
+                      for (const entry of history) {
+                        const include = (showCategoryList.mode === 'all') || isSameLocalDay(entry.date);
+                        if (include) {
+                          const newItem = entry.newExtinguisherId ? byId.get(entry.newExtinguisherId) : null;
+                          replacementsToday.push({ entry, oldItem, newItem });
+                        }
+                      }
+                    }
+
+                    // Debug info for troubleshooting
+                    try {
+                      console.log('[Replacements Today] total events:', replacementsToday.length);
+                    } catch {}
+
+                    if (replacementsToday.length === 0) {
+                      return <div className="text-gray-500">No replacements found.</div>;
+                    }
+
+                    // Sort by time descending (most recent first)
+                    replacementsToday.sort((a, b) => new Date(b.entry.date) - new Date(a.entry.date));
+
+                    return (
+                      <div className="space-y-2">
+                        {replacementsToday.map((row, idx) => (
+                          <div key={`${row.entry.newExtinguisherId || row.oldItem.id}-${idx}`} className="p-3 border rounded flex items-center justify-between bg-gray-50">
+                            <div>
+                              <div className="font-semibold">
+                                {row.newItem?.assetId || row.oldItem.assetId}
+                                <span className="text-gray-500 font-normal"> (new)</span>
+                              </div>
+                              <div className="text-xs text-gray-600">
+                                From {row.oldItem.assetId} • {row.oldItem.section} • {row.oldItem.vicinity} {row.oldItem.parentLocation ? `• ${row.oldItem.parentLocation}` : ''}
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                Replaced at {new Date(row.entry.date).toLocaleTimeString()} by {row.entry.replacedBy || 'Unknown'}
+                              </div>
+                            </div>
+                            <button
+                              className="text-blue-600 hover:underline"
+                              onClick={() => {
+                                setShowCategoryList(null);
+                                const destAsset = row.newItem?.assetId || row.oldItem.assetId;
+                                navigate(`/app/extinguisher/${destAsset}`);
+                              }}
+                            >
+                              View
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
+
+                  // Default category list (e.g., spares)
                   const list = extinguishers
                     .filter(e => (e.category || 'standard') === showCategoryList.category)
                     .sort((a, b) => String(a.assetId || '').localeCompare(String(b.assetId || '')));
