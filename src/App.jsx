@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate, Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
-import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History } from 'lucide-react';
+import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History, ClipboardList } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce, writeBatch } from 'firebase/firestore';
 import { auth, db, storage, workspacesRef } from './firebase';
@@ -13,6 +13,7 @@ import SectionGrid from './components/SectionGrid';
 import SectionDetail from './components/SectionDetail';
 import ExtinguisherDetailView from './components/ExtinguisherDetailView';
 import Calculator from './components/Calculator.jsx';
+import CustomAssetChecker from './components/CustomAssetChecker.jsx';
 
 const SECTIONS = [
   'Main Hospital',
@@ -2671,6 +2672,15 @@ function App() {
                 <span className="hidden sm:inline">Calculator</span>
               </button>
               <button
+                onClick={() => navigate('/app/custom-assets')}
+                className="px-2 sm:px-3 py-1.5 sm:py-2 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white rounded flex items-center gap-1 sm:gap-2 text-xs sm:text-sm flex-shrink-0"
+                title="Custom Asset Checker"
+                style={{ minWidth: '44px', minHeight: '44px', WebkitTapHighlightColor: 'rgba(0,0,0,0.1)', touchAction: 'manipulation' }}
+              >
+                <ClipboardList size={16} className="sm:w-[18px] sm:h-[18px]" />
+                <span className="hidden sm:inline">Assets</span>
+              </button>
+              <button
                 onClick={() => setAdminMode(!adminMode)}
                 className={`p-1.5 sm:p-2 hover:bg-gray-600 active:bg-gray-700 rounded flex items-center justify-center gap-1 sm:gap-2 flex-shrink-0 ${adminMode ? 'bg-gray-600' : ''}`}
                 title={adminMode ? 'Exit Admin Mode' : 'Admin Mode'}
@@ -3444,6 +3454,15 @@ function App() {
             <Route
               path="calculator"
               element={<Calculator />}
+            />
+            <Route
+              path="custom-assets"
+              element={
+                <CustomAssetChecker
+                  user={user}
+                  currentWorkspaceId={currentWorkspaceId}
+                />
+              }
             />
           </Routes>
         </div>
