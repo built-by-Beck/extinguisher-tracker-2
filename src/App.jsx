@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate, Link } from 'react-router-dom';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History, ClipboardList } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce, writeBatch } from 'firebase/firestore';
@@ -977,15 +977,31 @@ function App() {
         'Section': item.section || ''
       }));
 
-      // Ensure stable ordering
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Extinguishers');
+
+      // Add header row
       const header = ['Asset ID', 'Serial', 'Vicinity', 'Parent Location', 'Section'];
-      const ws = XLSX.utils.json_to_sheet(rows, { header });
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Extinguishers');
+      worksheet.addRow(header);
+
+      // Add data rows
+      rows.forEach(row => {
+        worksheet.addRow(header.map(h => row[h]));
+      });
+
       const now = new Date();
       const { monthName, year } = getWorkspaceMonthInfo();
       const date = now.toISOString().split('T')[0];
-      XLSX.writeFile(wb, `Extinguisher_Database_Export_${monthName}_${year}_${date}.csv`);
+
+      // Generate CSV and download
+      const buffer = await workbook.csv.writeBuffer();
+      const blob = new Blob([buffer], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Extinguisher_Database_Export_${monthName}_${year}_${date}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
     } catch (e) {
       console.error('Error exporting CSV:', e);
       alert('Failed to export CSV.');
@@ -1397,14 +1413,46 @@ function App() {
     if (!file) return;
 
     const reader = new FileReader();
-    
+
     reader.onload = (event) => {
       const processFile = async () => {
         try {
-          const data = new Uint8Array(event.target.result);
-          const workbook = XLSX.read(data, { type: 'array' });
-          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-          const jsonData = XLSX.utils.sheet_to_json(firstSheet);
+          const data = event.target.result;
+          const workbook = new ExcelJS.Workbook();
+
+          // Determine file type and read accordingly
+          if (file.name.endsWith('.csv')) {
+            await workbook.csv.load(data);
+          } else {
+            await workbook.xlsx.load(data);
+          }
+
+          const worksheet = workbook.worksheets[0];
+
+          // Convert worksheet to JSON
+          const jsonData = [];
+          const headers = [];
+          worksheet.eachRow((row, rowNumber) => {
+            if (rowNumber === 1) {
+              // First row is headers
+              row.eachCell((cell) => {
+                headers.push(cell.value ? String(cell.value) : '');
+              });
+            } else {
+              // Data rows
+              const rowObj = {};
+              row.eachCell((cell, colNumber) => {
+                const header = headers[colNumber - 1];
+                if (header) {
+                  rowObj[header] = cell.value != null ? String(cell.value) : '';
+                }
+              });
+              if (Object.keys(rowObj).length > 0) {
+                jsonData.push(rowObj);
+              }
+            }
+          });
+
           // Prepare a local index of existing extinguishers by Asset ID (string)
           // Use loaded state; if not yet loaded, the onSnapshot handler will refresh UI after import
           const existingIndex = new Map(
@@ -1956,13 +2004,34 @@ function App() {
     const timestamp = now.toISOString().split('T')[0]; // YYYY-MM-DD format
     const typeLabel = type === 'all' ? 'All' : type === 'passed' ? 'Passed' : 'Failed';
 
-    const ws = XLSX.utils.json_to_sheet(formatted);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Inspections');
-    XLSX.writeFile(wb, `${monthName}_${year}_Extinguisher_Checks_${typeLabel}_${timestamp}_Export.xlsx`);
+    // Create workbook and worksheet
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Inspections');
+
+    // Add headers from first row keys
+    if (formatted.length > 0) {
+      const headers = Object.keys(formatted[0]);
+      worksheet.addRow(headers);
+
+      // Add data rows
+      formatted.forEach(row => {
+        worksheet.addRow(headers.map(h => row[h] ?? ''));
+      });
+    }
+
+    // Generate Excel file and download
+    workbook.xlsx.writeBuffer().then(buffer => {
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${monthName}_${year}_Extinguisher_Checks_${typeLabel}_${timestamp}_Export.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
   };
 
-  const exportTimeData = () => {
+  const exportTimeData = async () => {
     const timeData = SECTIONS.map(section => ({
       'Section': section,
       'Time Spent': formatTime(sectionTimes[section] || 0),
@@ -1978,10 +2047,30 @@ function App() {
     const { monthName, year } = getWorkspaceMonthInfo();
     const timestamp = now.toISOString().split('T')[0]; // YYYY-MM-DD format
 
-    const ws = XLSX.utils.json_to_sheet(timeData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Time Tracking');
-    XLSX.writeFile(wb, `${monthName}_${year}_Time_Tracking_${timestamp}_Export.xlsx`);
+    // Create workbook and worksheet
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Time Tracking');
+
+    // Add headers from first row keys
+    if (timeData.length > 0) {
+      const headers = Object.keys(timeData[0]);
+      worksheet.addRow(headers);
+
+      // Add data rows
+      timeData.forEach(row => {
+        worksheet.addRow(headers.map(h => row[h] ?? ''));
+      });
+    }
+
+    // Generate Excel file and download
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${monthName}_${year}_Time_Tracking_${timestamp}_Export.xlsx`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   // Device Sync Export - exports everything needed to sync to another device
