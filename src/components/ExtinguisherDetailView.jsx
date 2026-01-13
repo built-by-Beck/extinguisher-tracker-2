@@ -102,6 +102,7 @@ const ExtinguisherDetailView = ({ extinguishers }) => {
               <h1 className="text-2xl font-bold mb-2">Asset #{extinguisher.assetId}</h1>
               <div className="space-y-1 text-gray-300">
                 <p><span className="font-semibold">Serial:</span> {extinguisher.serial || 'N/A'}</p>
+                <p><span className="font-semibold">Manufacture Date:</span> {extinguisher.manufactureDate || 'N/A'}</p>
                 <p><span className="font-semibold">Section:</span> {extinguisher.section}</p>
               </div>
             </div>

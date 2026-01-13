@@ -3335,7 +3335,7 @@ function App() {
                     // Debug info for troubleshooting
                     try {
                       console.log('[Replacements Today] total events:', replacementsToday.length);
-                    } catch {}
+                    } catch { /* ignore logging errors */ }
 
                     if (replacementsToday.length === 0) {
                       return <div className="text-gray-500">No replacements found.</div>;
@@ -3957,8 +3957,8 @@ function App() {
       />
 
       {selectedItem && !editItem && (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-lg p-6 max-w-2xl w-full my-8 border-2 border-red-600 shadow-2xl">
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-start justify-center pt-2 px-2 pb-2 z-50 overflow-y-auto">
+          <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-lg p-4 md:p-6 max-w-2xl w-full my-2 border-2 border-red-600 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-2xl font-bold text-red-400">Inspect Fire Extinguisher</h3>
               <button
@@ -3991,6 +3991,28 @@ function App() {
                   <div className="text-sm text-gray-400">Serial Number</div>
                   <div className="font-mono text-white">{selectedItem.serial}</div>
                 </div>
+                <div className="col-span-2">
+                  <div className="text-sm text-gray-400 mb-1">Manufacture Date</div>
+                  <input
+                    type="text"
+                    value={selectedItem.manufactureDate || ''}
+                    onChange={(e) => {
+                      setSelectedItem({ ...selectedItem, manufactureDate: e.target.value });
+                    }}
+                    onBlur={async (e) => {
+                      const newValue = e.target.value.trim();
+                      try {
+                        const docRef = doc(db, 'extinguishers', selectedItem.id);
+                        await setDoc(docRef, { manufactureDate: newValue }, { merge: true });
+                      } catch (err) {
+                        console.error('Error saving manufacture date:', err);
+                        alert('Error saving date. Please try again.');
+                      }
+                    }}
+                    placeholder="e.g., 2019, 03/2019, or 2019-03"
+                    className="w-full p-2 border border-gray-600 rounded-lg bg-gray-700 text-white placeholder-gray-500 focus:ring-2 focus:ring-red-500 focus:border-red-500 text-sm"
+                  />
+                </div>
               </div>
 
               <div>
@@ -4002,36 +4024,6 @@ function App() {
               <div>
                 <div className="text-sm text-gray-400">Section</div>
                 <div className="font-medium text-white">{selectedItem.section}</div>
-              </div>
-
-              {/* Manufacture Year / Maintenance Date */}
-              <div>
-                <div className="text-sm text-gray-400 mb-1">Mfg Year / 6-Year / Hydro Test</div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={selectedItem.manufactureYear || ''}
-                    onChange={async (e) => {
-                      const newValue = e.target.value;
-                      // Update local state immediately for responsive UI
-                      setSelectedItem({ ...selectedItem, manufactureYear: newValue });
-                    }}
-                    onBlur={async (e) => {
-                      // Save to database on blur
-                      const newValue = e.target.value.trim();
-                      try {
-                        const docRef = doc(db, 'extinguishers', selectedItem.id);
-                        await setDoc(docRef, { manufactureYear: newValue }, { merge: true });
-                      } catch (err) {
-                        console.error('Error saving manufacture year:', err);
-                        alert('Error saving year. Please try again.');
-                      }
-                    }}
-                    placeholder="e.g., 2019 / 6yr: 2025 / Hydro: 2025"
-                    className="flex-1 p-2 border border-gray-600 rounded-lg bg-gray-700 text-white placeholder-gray-500 focus:ring-2 focus:ring-red-500 focus:border-red-500 text-sm"
-                  />
-                </div>
-                <div className="text-xs text-gray-500 mt-1">Enter manufacture year, 6-year maintenance, or hydrostatic test dates</div>
               </div>
 
               {/* Location chip with Open in Maps */}
@@ -4241,6 +4233,13 @@ function App() {
                 <RotateCcw size={20} />
                 Replace Extinguisher
               </button>
+              <button
+                onClick={() => setSelectedItem(null)}
+                className="w-full bg-gray-600 text-white p-3 rounded-lg hover:bg-gray-700 flex items-center justify-center gap-2 font-semibold transition shadow-lg"
+              >
+                <X size={20} />
+                Cancel
+              </button>
             </div>
           </div>
         </div>
@@ -4273,6 +4272,17 @@ function App() {
                   type="text"
                   value={editItem.serial}
                   onChange={(e) => setEditItem({...editItem, serial: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Manufacture Date</label>
+                <input
+                  type="text"
+                  value={editItem.manufactureDate || ''}
+                  onChange={(e) => setEditItem({...editItem, manufactureDate: e.target.value})}
+                  placeholder="e.g., 2019, 03/2019, or 2019-03"
                   className="w-full p-2 border border-gray-300 rounded-lg"
                 />
               </div>
