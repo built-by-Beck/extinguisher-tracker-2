@@ -115,6 +115,7 @@ function App() {
   // Quick lists modals
   const [showStatusList, setShowStatusList] = useState(null); // { status: 'pass'|'fail', scope: 'section'|'all' }
   const [showCategoryList, setShowCategoryList] = useState(null); // { category: 'spare'|'replaced' }
+  const [showWorkCompleted, setShowWorkCompleted] = useState(null); // { date: 'today'|'yesterday'|'YYYY-MM-DD', scope: 'section'|'all', statusFilter: 'fail'|'pass'|'all' }
   const statusPressTimerRef = useRef(null);
 
   const scanInputRef = useRef(null);
@@ -142,6 +143,57 @@ function App() {
     if (as !== 'pending' && bs === 'pending') return a;
     if (as !== 'pending' && bs !== 'pending') return (bcd >= acd) ? b : a;
     return (bcr >= acr) ? b : a;
+  };
+
+  // Helper function to check if a date matches a selected day filter
+  const isDateMatchingFilter = (isoDateString, dateFilter) => {
+    if (!isoDateString) return false;
+
+    const itemDate = new Date(isoDateString);
+    const now = new Date();
+
+    if (dateFilter === 'today') {
+      return itemDate.getFullYear() === now.getFullYear() &&
+             itemDate.getMonth() === now.getMonth() &&
+             itemDate.getDate() === now.getDate();
+    }
+
+    if (dateFilter === 'yesterday') {
+      const yesterday = new Date(now);
+      yesterday.setDate(yesterday.getDate() - 1);
+      return itemDate.getFullYear() === yesterday.getFullYear() &&
+             itemDate.getMonth() === yesterday.getMonth() &&
+             itemDate.getDate() === yesterday.getDate();
+    }
+
+    // Specific date (YYYY-MM-DD string): compare year, month, day
+    const targetDate = new Date(dateFilter + 'T00:00:00');
+    return itemDate.getFullYear() === targetDate.getFullYear() &&
+           itemDate.getMonth() === targetDate.getMonth() &&
+           itemDate.getDate() === targetDate.getDate();
+  };
+
+  // Generate date options for the dropdown (today, yesterday, and 30 days back)
+  const generateDateOptions = () => {
+    const options = [
+      { value: 'today', label: 'Today' },
+      { value: 'yesterday', label: 'Yesterday' }
+    ];
+
+    const now = new Date();
+    for (let i = 2; i <= 30; i++) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - i);
+      const isoDate = date.toISOString().split('T')[0]; // YYYY-MM-DD
+      const label = date.toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric'
+      });
+      options.push({ value: isoDate, label });
+    }
+
+    return options;
   };
 
   const computeDuplicateGroups = () => {
@@ -3144,6 +3196,17 @@ function App() {
                 <History size={20} />
                 View Replaced
               </button>
+              <button
+                onClick={() => setShowWorkCompleted({
+                  date: 'today',
+                  scope: selectedSection === 'All' ? 'all' : 'section',
+                  statusFilter: 'fail'
+                })}
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-500 text-white rounded hover:bg-indigo-600 transition w-full"
+              >
+                <ClipboardList size={20} />
+                Work Completed
+              </button>
               {adminMode && (
                 <>
                   <div className="border-t pt-2 mt-4">
@@ -3394,6 +3457,161 @@ function App() {
                           <button
                             className="text-blue-600 hover:underline"
                             onClick={() => { setShowCategoryList(null); navigate(`/app/extinguisher/${item.assetId}`); }}
+                          >
+                            View
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Daily Work Completed Modal */}
+        {showWorkCompleted && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <div className="bg-white rounded-lg p-6 max-w-3xl w-full my-8">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-xl font-bold">
+                  Work Completed
+                  {showWorkCompleted.scope === 'section' && selectedSection !== 'All'
+                    ? ` — ${selectedSection}`
+                    : ' — All Sections'}
+                </h3>
+                <button onClick={() => setShowWorkCompleted(null)}>
+                  <X size={24} />
+                </button>
+              </div>
+
+              {/* Filter Controls */}
+              <div className="flex flex-wrap items-center gap-3 mb-4">
+                {/* Date Filter */}
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-700">Date:</label>
+                  <select
+                    value={showWorkCompleted.date}
+                    onChange={(e) => setShowWorkCompleted(prev => ({ ...prev, date: e.target.value }))}
+                    className="p-2 border rounded"
+                  >
+                    {generateDateOptions().map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Scope Filter */}
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-700">Scope:</label>
+                  <select
+                    value={showWorkCompleted.scope}
+                    onChange={(e) => setShowWorkCompleted(prev => ({ ...prev, scope: e.target.value }))}
+                    className="p-2 border rounded"
+                  >
+                    <option value="section">Current Section</option>
+                    <option value="all">All Sections</option>
+                  </select>
+                </div>
+
+                {/* Status Filter */}
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-700">Status:</label>
+                  <select
+                    value={showWorkCompleted.statusFilter}
+                    onChange={(e) => setShowWorkCompleted(prev => ({ ...prev, statusFilter: e.target.value }))}
+                    className="p-2 border rounded"
+                  >
+                    <option value="fail">Failed Only</option>
+                    <option value="pass">Passed Only</option>
+                    <option value="all">All Status Changes</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Results List */}
+              <div className="max-h-[70vh] overflow-y-auto">
+                {(() => {
+                  const scopeIsSection = showWorkCompleted.scope === 'section' && selectedSection !== 'All';
+
+                  const list = extinguishers
+                    .filter(e => {
+                      // Must have a checkedDate that matches the selected date
+                      if (!isDateMatchingFilter(e.checkedDate, showWorkCompleted.date)) return false;
+
+                      // Status must be non-pending (has been inspected)
+                      const status = normalizeStatus(e.status);
+                      if (status === 'pending') return false;
+
+                      // Apply status filter
+                      if (showWorkCompleted.statusFilter !== 'all' && status !== showWorkCompleted.statusFilter) {
+                        return false;
+                      }
+
+                      // Apply scope filter
+                      if (scopeIsSection && e.section !== selectedSection) return false;
+
+                      return true;
+                    })
+                    .sort((a, b) => {
+                      // Sort by checkedDate descending (most recent first)
+                      const aTime = a.checkedDate ? new Date(a.checkedDate).getTime() : 0;
+                      const bTime = b.checkedDate ? new Date(b.checkedDate).getTime() : 0;
+                      return bTime - aTime;
+                    });
+
+                  if (list.length === 0) {
+                    return (
+                      <div className="text-gray-500 text-center py-8">
+                        No {showWorkCompleted.statusFilter === 'all' ? '' : showWorkCompleted.statusFilter + ' '}
+                        inspections found for the selected date.
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-2">
+                      <div className="text-sm text-gray-600 mb-2">
+                        {list.length} item{list.length !== 1 ? 's' : ''} found
+                      </div>
+                      {list.map(item => (
+                        <div
+                          key={item.id}
+                          className={`p-3 border rounded flex items-center justify-between ${
+                            normalizeStatus(item.status) === 'fail'
+                              ? 'bg-red-50 border-red-200'
+                              : 'bg-green-50 border-green-200'
+                          }`}
+                        >
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold">{item.assetId}</span>
+                              <span className={`text-xs px-2 py-0.5 rounded ${
+                                normalizeStatus(item.status) === 'fail'
+                                  ? 'bg-red-200 text-red-800'
+                                  : 'bg-green-200 text-green-800'
+                              }`}>
+                                {normalizeStatus(item.status).toUpperCase()}
+                              </span>
+                            </div>
+                            <div className="text-xs text-gray-600">
+                              {item.section} • {item.vicinity}
+                              {item.parentLocation ? ` • ${item.parentLocation}` : ''}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              Checked: {new Date(item.checkedDate).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}
+                            </div>
+                          </div>
+                          <button
+                            className="text-blue-600 hover:underline ml-2"
+                            onClick={() => {
+                              setShowWorkCompleted(null);
+                              navigate(`/app/extinguisher/${item.assetId}`);
+                            }}
                           >
                             View
                           </button>
