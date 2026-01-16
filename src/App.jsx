@@ -173,6 +173,40 @@ function App() {
            itemDate.getDate() === targetDate.getDate();
   };
 
+  // Helper function for failed extinguisher date range filtering
+  const isDateInRange = (isoDateString, filterType) => {
+    if (!isoDateString) return false;
+    if (filterType === 'all') return true;
+
+    const itemDate = new Date(isoDateString);
+    const now = new Date();
+
+    // Reset to start of day for accurate comparisons
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    switch (filterType) {
+      case 'today':
+        return itemDate.getFullYear() === now.getFullYear() &&
+               itemDate.getMonth() === now.getMonth() &&
+               itemDate.getDate() === now.getDate();
+
+      case 'week': {
+        const weekAgo = new Date(startOfToday);
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        return itemDate >= weekAgo;
+      }
+
+      case 'month':
+        // Current calendar month
+        return itemDate.getFullYear() === now.getFullYear() &&
+               itemDate.getMonth() === now.getMonth();
+
+      case 'all':
+      default:
+        return true;
+    }
+  };
+
   // Generate date options for the dropdown (today, yesterday, and 30 days back)
   const generateDateOptions = () => {
     const options = [
@@ -3176,7 +3210,7 @@ function App() {
                 View Passed
               </button>
               <button
-                onClick={() => setShowStatusList({ status: 'fail', scope: selectedSection === 'All' ? 'all' : 'section' })}
+                onClick={() => setShowStatusList({ status: 'fail', scope: selectedSection === 'All' ? 'all' : 'section', dateFilter: 'all', sectionFilter: selectedSection === 'All' ? 'all' : selectedSection })}
                 className="flex items-center gap-2 px-4 py-2 bg-rose-500 text-white rounded hover:bg-rose-600 transition w-full"
               >
                 <XCircle size={20} />
@@ -3252,11 +3286,11 @@ function App() {
           </div>
           <div
             className="bg-white p-4 rounded-lg shadow text-center cursor-pointer hover:shadow-md transition"
-            onClick={() => setShowStatusList({ status: 'fail', scope: selectedSection === 'All' ? 'all' : 'section' })}
+            onClick={() => setShowStatusList({ status: 'fail', scope: selectedSection === 'All' ? 'all' : 'section', dateFilter: 'all', sectionFilter: selectedSection === 'All' ? 'all' : selectedSection })}
             onMouseDown={() => {
               if (statusPressTimerRef.current) clearTimeout(statusPressTimerRef.current);
               statusPressTimerRef.current = setTimeout(() => {
-                setShowStatusList({ status: 'fail', scope: 'all' });
+                setShowStatusList({ status: 'fail', scope: 'all', dateFilter: 'all', sectionFilter: 'all' });
               }, 600);
             }}
             onMouseUp={() => { if (statusPressTimerRef.current) { clearTimeout(statusPressTimerRef.current); statusPressTimerRef.current = null; } }}
@@ -3264,7 +3298,7 @@ function App() {
             onTouchStart={() => {
               if (statusPressTimerRef.current) clearTimeout(statusPressTimerRef.current);
               statusPressTimerRef.current = setTimeout(() => {
-                setShowStatusList({ status: 'fail', scope: 'all' });
+                setShowStatusList({ status: 'fail', scope: 'all', dateFilter: 'all', sectionFilter: 'all' });
               }, 600);
             }}
             onTouchEnd={() => { if (statusPressTimerRef.current) { clearTimeout(statusPressTimerRef.current); statusPressTimerRef.current = null; } }}
@@ -3287,50 +3321,121 @@ function App() {
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-xl font-bold">
                   {showStatusList.status === 'pass' ? 'Passed' : 'Failed'} Extinguishers
-                  {showStatusList.scope === 'section' && selectedSection !== 'All' ? ` — ${selectedSection}` : ' — All Sections'}
+                  {showStatusList.sectionFilter && showStatusList.sectionFilter !== 'all'
+                    ? ` — ${showStatusList.sectionFilter}`
+                    : ' — All Sections'}
+                  {showStatusList.status === 'fail' && showStatusList.dateFilter && showStatusList.dateFilter !== 'all' && (
+                    <span className="text-sm font-normal text-gray-500 ml-2">
+                      ({showStatusList.dateFilter === 'today' ? 'Today' :
+                        showStatusList.dateFilter === 'week' ? 'This Week' : 'This Month'})
+                    </span>
+                  )}
                 </h3>
                 <button onClick={() => setShowStatusList(null)}>
                   <X size={24} />
                 </button>
               </div>
-              <div className="flex items-center gap-3 mb-4">
-                <label className="text-sm text-gray-700">Scope:</label>
-                <select
-                  value={showStatusList.scope}
-                  onChange={(e) => setShowStatusList(prev => ({ ...prev, scope: e.target.value }))}
-                  className="p-2 border rounded"
-                >
-                  <option value="section">Current Section</option>
-                  <option value="all">All Sections</option>
-                </select>
+              {/* Filter Controls */}
+              <div className="flex flex-wrap items-center gap-3 mb-4">
+                {/* Date Filter - only show for 'fail' status */}
+                {showStatusList.status === 'fail' && (
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm text-gray-700">When:</label>
+                    <select
+                      value={showStatusList.dateFilter || 'all'}
+                      onChange={(e) => setShowStatusList(prev => ({ ...prev, dateFilter: e.target.value }))}
+                      className="p-2 border rounded"
+                    >
+                      <option value="today">Today</option>
+                      <option value="week">This Week</option>
+                      <option value="month">This Month</option>
+                      <option value="all">All Time</option>
+                    </select>
+                  </div>
+                )}
+                {/* Section Filter */}
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-700">Section:</label>
+                  <select
+                    value={showStatusList.sectionFilter || 'all'}
+                    onChange={(e) => setShowStatusList(prev => ({ ...prev, sectionFilter: e.target.value }))}
+                    className="p-2 border rounded"
+                  >
+                    <option value="all">All Sections</option>
+                    {SECTIONS.map(section => (
+                      <option key={section} value={section}>{section}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div className="max-h-[70vh] overflow-y-auto">
                 {(() => {
-                  const scopeIsSection = showStatusList.scope === 'section' && selectedSection !== 'All';
+                  const effectiveSection = showStatusList.sectionFilter || 'all';
+                  const dateFilter = showStatusList.dateFilter || 'all';
+
                   const list = extinguishers
+                    // Filter by status
                     .filter(e => String(e.status || '').toLowerCase() === showStatusList.status)
-                    .filter(e => !scopeIsSection || e.section === selectedSection)
-                    .sort((a, b) => String(a.assetId || '').localeCompare(String(b.assetId || '')));
+                    // For 'fail' status only: exclude replaced items (they have replacement history)
+                    .filter(e => {
+                      if (showStatusList.status !== 'fail') return true;
+                      return !Array.isArray(e.replacementHistory) || e.replacementHistory.length === 0;
+                    })
+                    // Filter by section
+                    .filter(e => effectiveSection === 'all' || e.section === effectiveSection)
+                    // For 'fail' status only: apply date filter
+                    .filter(e => {
+                      if (showStatusList.status !== 'fail') return true;
+                      return isDateInRange(e.checkedDate, dateFilter);
+                    })
+                    // Sort: for failed items, sort by date descending; for passed, sort by assetId
+                    .sort((a, b) => {
+                      if (showStatusList.status === 'fail') {
+                        const aTime = a.checkedDate ? new Date(a.checkedDate).getTime() : 0;
+                        const bTime = b.checkedDate ? new Date(b.checkedDate).getTime() : 0;
+                        return bTime - aTime; // Most recent first
+                      }
+                      return String(a.assetId || '').localeCompare(String(b.assetId || ''));
+                    });
+
                   if (list.length === 0) {
                     return <div className="text-gray-500">No items found.</div>;
                   }
                   return (
-                    <div className="space-y-2">
-                      {list.map(item => (
-                        <div key={item.id} className="p-3 border rounded flex items-center justify-between bg-gray-50">
-                          <div>
-                            <div className="font-semibold">{item.assetId}</div>
-                            <div className="text-xs text-gray-600">{item.section} • {item.vicinity} {item.parentLocation ? `• ${item.parentLocation}` : ''}</div>
+                    <>
+                      <div className="text-sm text-gray-600 mb-2">
+                        {list.length} item{list.length !== 1 ? 's' : ''} {showStatusList.status === 'fail' ? 'needing attention' : 'found'}
+                      </div>
+                      <div className="space-y-2">
+                        {list.map(item => (
+                          <div key={item.id} className={`p-3 border rounded flex items-center justify-between ${
+                            showStatusList.status === 'fail' ? 'bg-red-50 border-red-200' : 'bg-gray-50'
+                          }`}>
+                            <div className="flex-1">
+                              <div className="font-semibold">{item.assetId}</div>
+                              <div className="text-xs text-gray-600">
+                                {item.section} • {item.vicinity}
+                                {item.parentLocation ? ` • ${item.parentLocation}` : ''}
+                              </div>
+                              {/* Show failed date for fail status */}
+                              {showStatusList.status === 'fail' && item.checkedDate && (
+                                <div className="text-xs text-red-600">
+                                  Failed: {new Date(item.checkedDate).toLocaleDateString()} at {
+                                    new Date(item.checkedDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                                  }
+                                </div>
+                              )}
+                            </div>
+                            <button
+                              className="text-blue-600 hover:underline ml-2"
+                              onClick={() => { setShowStatusList(null); navigate(`/app/extinguisher/${item.assetId}`); }}
+                            >
+                              View
+                            </button>
                           </div>
-                          <button
-                            className="text-blue-600 hover:underline"
-                            onClick={() => { setShowStatusList(null); navigate(`/app/extinguisher/${item.assetId}`); }}
-                          >
-                            View
-                          </button>
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    </>
                   );
                 })()}
               </div>
