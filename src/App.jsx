@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate, Link } from 'react-router-dom';
 import ExcelJS from 'exceljs';
-import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History, ClipboardList } from 'lucide-react';
+import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History, ClipboardList, Trash2, RotateCw } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce, writeBatch } from 'firebase/firestore';
 import { auth, db, storage, workspacesRef } from './firebase';
@@ -129,6 +129,12 @@ function App() {
   const [duplicateGroups, setDuplicateGroups] = useState([]); // [{ assetId, keep, remove }]
   const [duplicateScanRunning, setDuplicateScanRunning] = useState(false);
   const [duplicateFixRunning, setDuplicateFixRunning] = useState(false);
+
+  // Deleted extinguishers state
+  const [deletedExtinguishers, setDeletedExtinguishers] = useState([]);
+  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState(null);
+  const [showDeletedItemsModal, setShowDeletedItemsModal] = useState(false);
 
   const normalizeStatus = (s) => String(s || '').toLowerCase();
   const pickPreferredDoc = (a, b) => {
@@ -561,6 +567,30 @@ function App() {
     });
 
     return () => unsubscribeSectionNotes();
+  }, [user]);
+
+  // Load deleted extinguishers
+  useEffect(() => {
+    if (!user) {
+      setDeletedExtinguishers([]);
+      return;
+    }
+
+    const deletedQuery = query(
+      collection(db, 'deletedExtinguishers'),
+      where('userId', '==', user.uid)
+    );
+
+    const unsubscribeDeleted = onSnapshot(deletedQuery, (snapshot) => {
+      const deletedData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // Sort by deletion date (newest first)
+      deletedData.sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
+      setDeletedExtinguishers(deletedData);
+    }, (error) => {
+      console.error('Firebase deleted extinguishers listener error:', error.code, error.message);
+    });
+
+    return () => unsubscribeDeleted();
   }, [user]);
 
   useEffect(() => {
@@ -1866,16 +1896,79 @@ function App() {
     }
   };
 
-  const deleteItem = async (item) => {
-    if (window.confirm(`Are you sure you want to delete fire extinguisher ${item.assetId}?`)) {
-      try {
-        await deleteDoc(doc(db, 'extinguishers', item.id));
-        setEditItem(null);
-        alert('Fire extinguisher deleted successfully!');
-      } catch (error) {
-        console.error('Error deleting extinguisher:', error);
-        alert('Error deleting fire extinguisher. Please try again.');
-      }
+  // Show delete confirmation modal
+  const deleteItem = (item) => {
+    setItemToDelete(item);
+    setShowDeleteConfirmModal(true);
+  };
+
+  // Confirm deletion - soft delete by moving to deletedExtinguishers collection
+  const confirmDeleteItem = async () => {
+    if (!itemToDelete) return;
+
+    try {
+      // Create a copy in deletedExtinguishers collection
+      const deletedData = {
+        ...itemToDelete,
+        originalId: itemToDelete.id,
+        deletedAt: new Date().toISOString(),
+        deletedBy: user.email || user.uid
+      };
+      // Remove the Firestore document id (we'll use originalId to track it)
+      delete deletedData.id;
+
+      await addDoc(collection(db, 'deletedExtinguishers'), deletedData);
+
+      // Delete from extinguishers collection
+      await deleteDoc(doc(db, 'extinguishers', itemToDelete.id));
+
+      setShowDeleteConfirmModal(false);
+      setItemToDelete(null);
+      setEditItem(null);
+      setSelectedItem(null);
+      alert('Fire extinguisher deleted successfully!');
+    } catch (error) {
+      console.error('Error deleting extinguisher:', error);
+      alert('Error deleting fire extinguisher. Please try again.');
+    }
+  };
+
+  // Restore a deleted extinguisher
+  const restoreDeletedItem = async (deletedItem) => {
+    try {
+      // Create a new document in extinguishers collection
+      const restoredData = { ...deletedItem };
+      // Remove deletion metadata
+      delete restoredData.id;
+      delete restoredData.originalId;
+      delete restoredData.deletedAt;
+      delete restoredData.deletedBy;
+
+      // Add back to extinguishers collection
+      await addDoc(collection(db, 'extinguishers'), restoredData);
+
+      // Remove from deletedExtinguishers collection
+      await deleteDoc(doc(db, 'deletedExtinguishers', deletedItem.id));
+
+      alert(`Fire extinguisher ${deletedItem.assetId} restored successfully!`);
+    } catch (error) {
+      console.error('Error restoring extinguisher:', error);
+      alert('Error restoring fire extinguisher. Please try again.');
+    }
+  };
+
+  // Permanently delete a deleted item (from the deleted list)
+  const permanentlyDeleteItem = async (deletedItem) => {
+    if (!window.confirm(`Are you sure you want to PERMANENTLY delete ${deletedItem.assetId}? This cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await deleteDoc(doc(db, 'deletedExtinguishers', deletedItem.id));
+      alert('Fire extinguisher permanently deleted.');
+    } catch (error) {
+      console.error('Error permanently deleting extinguisher:', error);
+      alert('Error permanently deleting fire extinguisher. Please try again.');
     }
   };
 
@@ -3089,6 +3182,21 @@ function App() {
               >
                 <History size={20} />
                 Cleanup Duplicates (by Asset ID)
+              </button>
+              <button
+                onClick={() => {
+                  setShowDeletedItemsModal(true);
+                  setShowMenu(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition w-full"
+              >
+                <Trash2 size={20} />
+                View Deleted Items
+                {deletedExtinguishers.length > 0 && (
+                  <span className="ml-auto bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
+                    {deletedExtinguishers.length}
+                  </span>
+                )}
               </button>
               <button
                 onClick={() => {
@@ -4765,6 +4873,151 @@ function App() {
                   Cancel
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirmModal && itemToDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[60]">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+                <Trash2 className="text-red-600" size={24} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Delete Fire Extinguisher?</h3>
+                <p className="text-sm text-gray-500">This action can be undone from the deleted items list</p>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 rounded-lg p-4 mb-4">
+              <p className="text-sm text-gray-600">
+                <strong>Asset ID:</strong> {itemToDelete.assetId}
+              </p>
+              {itemToDelete.serial && (
+                <p className="text-sm text-gray-600">
+                  <strong>Serial:</strong> {itemToDelete.serial}
+                </p>
+              )}
+              <p className="text-sm text-gray-600">
+                <strong>Section:</strong> {itemToDelete.section}
+              </p>
+              {itemToDelete.vicinity && (
+                <p className="text-sm text-gray-600">
+                  <strong>Location:</strong> {itemToDelete.vicinity}
+                </p>
+              )}
+            </div>
+
+            <p className="text-sm text-gray-600 mb-4">
+              Are you sure you want to delete this fire extinguisher? You can restore it later from the "View Deleted Items" menu.
+            </p>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowDeleteConfirmModal(false);
+                  setItemToDelete(null);
+                }}
+                className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteItem}
+                className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 flex items-center justify-center gap-2"
+              >
+                <Trash2 size={18} />
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Deleted Items Modal */}
+      {showDeletedItemsModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-lg p-6 max-w-4xl w-full my-8 max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center mb-4">
+              <div>
+                <h3 className="text-xl font-bold">Deleted Fire Extinguishers</h3>
+                <p className="text-sm text-gray-500">{deletedExtinguishers.length} item{deletedExtinguishers.length !== 1 ? 's' : ''} in trash</p>
+              </div>
+              <button onClick={() => setShowDeletedItemsModal(false)}>
+                <X size={24} />
+              </button>
+            </div>
+
+            {deletedExtinguishers.length === 0 ? (
+              <div className="text-center py-12 text-gray-500">
+                <Trash2 size={48} className="mx-auto mb-4 opacity-50" />
+                <p>No deleted items</p>
+                <p className="text-sm">Deleted fire extinguishers will appear here</p>
+              </div>
+            ) : (
+              <div className="overflow-y-auto flex-1">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="text-left p-3 font-medium text-gray-600">Asset ID</th>
+                      <th className="text-left p-3 font-medium text-gray-600">Serial</th>
+                      <th className="text-left p-3 font-medium text-gray-600">Section</th>
+                      <th className="text-left p-3 font-medium text-gray-600">Deleted</th>
+                      <th className="text-left p-3 font-medium text-gray-600">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {deletedExtinguishers.map((item) => (
+                      <tr key={item.id} className="hover:bg-gray-50">
+                        <td className="p-3 font-medium">{item.assetId}</td>
+                        <td className="p-3 text-gray-600">{item.serial || '-'}</td>
+                        <td className="p-3 text-gray-600">{item.section}</td>
+                        <td className="p-3 text-gray-600">
+                          <div className="text-xs">
+                            {new Date(item.deletedAt).toLocaleDateString()}
+                            <span className="text-gray-400 ml-1">
+                              {new Date(item.deletedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                          {item.deletedBy && (
+                            <div className="text-xs text-gray-400">{item.deletedBy}</div>
+                          )}
+                        </td>
+                        <td className="p-3">
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => restoreDeletedItem(item)}
+                              className="px-3 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600 flex items-center gap-1"
+                            >
+                              <RotateCw size={14} />
+                              Restore
+                            </button>
+                            <button
+                              onClick={() => permanentlyDeleteItem(item)}
+                              className="px-3 py-1 bg-red-500 text-white text-xs rounded hover:bg-red-600 flex items-center gap-1"
+                            >
+                              <Trash2 size={14} />
+                              Permanent
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="border-t pt-4 mt-4">
+              <button
+                onClick={() => setShowDeletedItemsModal(false)}
+                className="w-full px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>
