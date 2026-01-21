@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate, Link } from 'react-router-dom';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce, writeBatch } from 'firebase/firestore';
@@ -968,13 +968,23 @@ function App() {
 
       // Ensure stable ordering
       const header = ['Asset ID', 'Serial', 'Vicinity', 'Parent Location', 'Section'];
-      const ws = XLSX.utils.json_to_sheet(rows, { header });
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Extinguishers');
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Extinguishers');
+      worksheet.columns = header.map(key => ({ header: key, key }));
+      rows.forEach(row => worksheet.addRow(row));
+
       const now = new Date();
       const { monthName, year } = getWorkspaceMonthInfo();
       const date = now.toISOString().split('T')[0];
-      XLSX.writeFile(wb, `Extinguisher_Database_Export_${monthName}_${year}_${date}.csv`);
+
+      const buffer = await workbook.csv.writeBuffer();
+      const blob = new Blob([buffer], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Extinguisher_Database_Export_${monthName}_${year}_${date}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
     } catch (e) {
       console.error('Error exporting CSV:', e);
       alert('Failed to export CSV.');
@@ -1386,14 +1396,44 @@ function App() {
     if (!file) return;
 
     const reader = new FileReader();
-    
+
     reader.onload = (event) => {
       const processFile = async () => {
         try {
-          const data = new Uint8Array(event.target.result);
-          const workbook = XLSX.read(data, { type: 'array' });
-          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-          const jsonData = XLSX.utils.sheet_to_json(firstSheet);
+          const data = event.target.result;
+          const workbook = new ExcelJS.Workbook();
+
+          // Determine file type and load appropriately
+          if (file.name.endsWith('.csv')) {
+            await workbook.csv.load(data);
+          } else {
+            await workbook.xlsx.load(data);
+          }
+
+          const firstSheet = workbook.worksheets[0];
+
+          // Convert worksheet to JSON format
+          const jsonData = [];
+          const headers = [];
+          firstSheet.eachRow((row, rowNumber) => {
+            if (rowNumber === 1) {
+              // First row is headers
+              row.eachCell((cell, colNumber) => {
+                headers[colNumber] = cell.value;
+              });
+            } else {
+              // Data rows
+              const rowData = {};
+              row.eachCell((cell, colNumber) => {
+                if (headers[colNumber]) {
+                  rowData[headers[colNumber]] = cell.value;
+                }
+              });
+              if (Object.keys(rowData).length > 0) {
+                jsonData.push(rowData);
+              }
+            }
+          });
           // Prepare a local index of existing extinguishers by Asset ID (string)
           // Use loaded state; if not yet loaded, the onSnapshot handler will refresh UI after import
           const existingIndex = new Map(
@@ -1955,10 +1995,23 @@ function App() {
     const timestamp = now.toISOString().split('T')[0]; // YYYY-MM-DD format
     const typeLabel = type === 'all' ? 'All' : type === 'passed' ? 'Passed' : 'Failed';
 
-    const ws = XLSX.utils.json_to_sheet(formatted);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Inspections');
-    XLSX.writeFile(wb, `${monthName}_${year}_Extinguisher_Checks_${typeLabel}_${timestamp}_Export.xlsx`);
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Inspections');
+
+    if (formatted.length > 0) {
+      worksheet.columns = Object.keys(formatted[0]).map(key => ({ header: key, key }));
+      formatted.forEach(row => worksheet.addRow(row));
+    }
+
+    workbook.xlsx.writeBuffer().then(buffer => {
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${monthName}_${year}_Extinguisher_Checks_${typeLabel}_${timestamp}_Export.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
   };
 
   const exportTimeData = () => {
@@ -1977,10 +2030,23 @@ function App() {
     const { monthName, year } = getWorkspaceMonthInfo();
     const timestamp = now.toISOString().split('T')[0]; // YYYY-MM-DD format
 
-    const ws = XLSX.utils.json_to_sheet(timeData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Time Tracking');
-    XLSX.writeFile(wb, `${monthName}_${year}_Time_Tracking_${timestamp}_Export.xlsx`);
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Time Tracking');
+
+    if (timeData.length > 0) {
+      worksheet.columns = Object.keys(timeData[0]).map(key => ({ header: key, key }));
+      timeData.forEach(row => worksheet.addRow(row));
+    }
+
+    workbook.xlsx.writeBuffer().then(buffer => {
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${monthName}_${year}_Time_Tracking_${timestamp}_Export.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
   };
 
   // Device Sync Export - exports everything needed to sync to another device
