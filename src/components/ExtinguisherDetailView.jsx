@@ -448,6 +448,15 @@ const ExtinguisherDetailView = ({ extinguishers }) => {
                       </div>
                     )}
 
+                    {replacement.oldStatus && (
+                      <div>
+                        <span className="text-gray-400">Old Status:</span>
+                        <span className={`ml-2 font-semibold ${replacement.oldStatus === 'fail' ? 'text-red-400' : replacement.oldStatus === 'pass' ? 'text-green-400' : 'text-yellow-400'}`}>
+                          {replacement.oldStatus.toUpperCase()}
+                        </span>
+                      </div>
+                    )}
+
                     {replacement.newManufactureDate && (
                       <div>
                         <span className="text-gray-400">New Manufacture Date:</span>

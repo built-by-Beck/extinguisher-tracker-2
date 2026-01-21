@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate, Link } from 'react-router-dom';
-import ExcelJS from 'exceljs';
-import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History, ClipboardList, Trash2, RotateCw } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce, writeBatch } from 'firebase/firestore';
 import { auth, db, storage, workspacesRef } from './firebase';
@@ -13,7 +13,6 @@ import SectionGrid from './components/SectionGrid';
 import SectionDetail from './components/SectionDetail';
 import ExtinguisherDetailView from './components/ExtinguisherDetailView';
 import Calculator from './components/Calculator.jsx';
-import CustomAssetChecker from './components/CustomAssetChecker.jsx';
 
 const SECTIONS = [
   'Main Hospital',
@@ -115,7 +114,6 @@ function App() {
   // Quick lists modals
   const [showStatusList, setShowStatusList] = useState(null); // { status: 'pass'|'fail', scope: 'section'|'all' }
   const [showCategoryList, setShowCategoryList] = useState(null); // { category: 'spare'|'replaced' }
-  const [showWorkCompleted, setShowWorkCompleted] = useState(null); // { date: 'today'|'yesterday'|'YYYY-MM-DD', scope: 'section'|'all', statusFilter: 'fail'|'pass'|'all' }
   const statusPressTimerRef = useRef(null);
 
   const scanInputRef = useRef(null);
@@ -130,12 +128,6 @@ function App() {
   const [duplicateScanRunning, setDuplicateScanRunning] = useState(false);
   const [duplicateFixRunning, setDuplicateFixRunning] = useState(false);
 
-  // Deleted extinguishers state
-  const [deletedExtinguishers, setDeletedExtinguishers] = useState([]);
-  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
-  const [itemToDelete, setItemToDelete] = useState(null);
-  const [showDeletedItemsModal, setShowDeletedItemsModal] = useState(false);
-
   const normalizeStatus = (s) => String(s || '').toLowerCase();
   const pickPreferredDoc = (a, b) => {
     // Returns the preferred doc between a and b using the same rules as list dedupe
@@ -149,91 +141,6 @@ function App() {
     if (as !== 'pending' && bs === 'pending') return a;
     if (as !== 'pending' && bs !== 'pending') return (bcd >= acd) ? b : a;
     return (bcr >= acr) ? b : a;
-  };
-
-  // Helper function to check if a date matches a selected day filter
-  const isDateMatchingFilter = (isoDateString, dateFilter) => {
-    if (!isoDateString) return false;
-
-    const itemDate = new Date(isoDateString);
-    const now = new Date();
-
-    if (dateFilter === 'today') {
-      return itemDate.getFullYear() === now.getFullYear() &&
-             itemDate.getMonth() === now.getMonth() &&
-             itemDate.getDate() === now.getDate();
-    }
-
-    if (dateFilter === 'yesterday') {
-      const yesterday = new Date(now);
-      yesterday.setDate(yesterday.getDate() - 1);
-      return itemDate.getFullYear() === yesterday.getFullYear() &&
-             itemDate.getMonth() === yesterday.getMonth() &&
-             itemDate.getDate() === yesterday.getDate();
-    }
-
-    // Specific date (YYYY-MM-DD string): compare year, month, day
-    const targetDate = new Date(dateFilter + 'T00:00:00');
-    return itemDate.getFullYear() === targetDate.getFullYear() &&
-           itemDate.getMonth() === targetDate.getMonth() &&
-           itemDate.getDate() === targetDate.getDate();
-  };
-
-  // Helper function for failed extinguisher date range filtering
-  const isDateInRange = (isoDateString, filterType) => {
-    if (!isoDateString) return false;
-    if (filterType === 'all') return true;
-
-    const itemDate = new Date(isoDateString);
-    const now = new Date();
-
-    // Reset to start of day for accurate comparisons
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-    switch (filterType) {
-      case 'today':
-        return itemDate.getFullYear() === now.getFullYear() &&
-               itemDate.getMonth() === now.getMonth() &&
-               itemDate.getDate() === now.getDate();
-
-      case 'week': {
-        const weekAgo = new Date(startOfToday);
-        weekAgo.setDate(weekAgo.getDate() - 7);
-        return itemDate >= weekAgo;
-      }
-
-      case 'month':
-        // Current calendar month
-        return itemDate.getFullYear() === now.getFullYear() &&
-               itemDate.getMonth() === now.getMonth();
-
-      case 'all':
-      default:
-        return true;
-    }
-  };
-
-  // Generate date options for the dropdown (today, yesterday, and 30 days back)
-  const generateDateOptions = () => {
-    const options = [
-      { value: 'today', label: 'Today' },
-      { value: 'yesterday', label: 'Yesterday' }
-    ];
-
-    const now = new Date();
-    for (let i = 2; i <= 30; i++) {
-      const date = new Date(now);
-      date.setDate(date.getDate() - i);
-      const isoDate = date.toISOString().split('T')[0]; // YYYY-MM-DD
-      const label = date.toLocaleDateString('en-US', {
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric'
-      });
-      options.push({ value: isoDate, label });
-    }
-
-    return options;
   };
 
   const computeDuplicateGroups = () => {
@@ -501,17 +408,7 @@ function App() {
           chooseCurr = currCreated >= prevCreated;
         }
 
-        // Merge replacement history from both sides so we don't lose events
-        const mergedHistory = [
-          ...(Array.isArray(prev.replacementHistory) ? prev.replacementHistory : []),
-          ...(Array.isArray(it.replacementHistory) ? it.replacementHistory : []),
-        ];
-
-        if (chooseCurr) {
-          byAsset.set(key, { ...it, replacementHistory: mergedHistory });
-        } else {
-          byAsset.set(key, { ...prev, replacementHistory: mergedHistory });
-        }
+        if (chooseCurr) byAsset.set(key, it);
       }
       return Array.from(byAsset.values());
     };
@@ -567,30 +464,6 @@ function App() {
     });
 
     return () => unsubscribeSectionNotes();
-  }, [user]);
-
-  // Load deleted extinguishers
-  useEffect(() => {
-    if (!user) {
-      setDeletedExtinguishers([]);
-      return;
-    }
-
-    const deletedQuery = query(
-      collection(db, 'deletedExtinguishers'),
-      where('userId', '==', user.uid)
-    );
-
-    const unsubscribeDeleted = onSnapshot(deletedQuery, (snapshot) => {
-      const deletedData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      // Sort by deletion date (newest first)
-      deletedData.sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
-      setDeletedExtinguishers(deletedData);
-    }, (error) => {
-      console.error('Firebase deleted extinguishers listener error:', error.code, error.message);
-    });
-
-    return () => unsubscribeDeleted();
   }, [user]);
 
   useEffect(() => {
@@ -1093,31 +966,15 @@ function App() {
         'Section': item.section || ''
       }));
 
-      const workbook = new ExcelJS.Workbook();
-      const worksheet = workbook.addWorksheet('Extinguishers');
-
-      // Add header row
+      // Ensure stable ordering
       const header = ['Asset ID', 'Serial', 'Vicinity', 'Parent Location', 'Section'];
-      worksheet.addRow(header);
-
-      // Add data rows
-      rows.forEach(row => {
-        worksheet.addRow(header.map(h => row[h]));
-      });
-
+      const ws = XLSX.utils.json_to_sheet(rows, { header });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Extinguishers');
       const now = new Date();
       const { monthName, year } = getWorkspaceMonthInfo();
       const date = now.toISOString().split('T')[0];
-
-      // Generate CSV and download
-      const buffer = await workbook.csv.writeBuffer();
-      const blob = new Blob([buffer], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Extinguisher_Database_Export_${monthName}_${year}_${date}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
+      XLSX.writeFile(wb, `Extinguisher_Database_Export_${monthName}_${year}_${date}.csv`);
     } catch (e) {
       console.error('Error exporting CSV:', e);
       alert('Failed to export CSV.');
@@ -1529,46 +1386,14 @@ function App() {
     if (!file) return;
 
     const reader = new FileReader();
-
+    
     reader.onload = (event) => {
       const processFile = async () => {
         try {
-          const data = event.target.result;
-          const workbook = new ExcelJS.Workbook();
-
-          // Determine file type and read accordingly
-          if (file.name.endsWith('.csv')) {
-            await workbook.csv.load(data);
-          } else {
-            await workbook.xlsx.load(data);
-          }
-
-          const worksheet = workbook.worksheets[0];
-
-          // Convert worksheet to JSON
-          const jsonData = [];
-          const headers = [];
-          worksheet.eachRow((row, rowNumber) => {
-            if (rowNumber === 1) {
-              // First row is headers
-              row.eachCell((cell) => {
-                headers.push(cell.value ? String(cell.value) : '');
-              });
-            } else {
-              // Data rows
-              const rowObj = {};
-              row.eachCell((cell, colNumber) => {
-                const header = headers[colNumber - 1];
-                if (header) {
-                  rowObj[header] = cell.value != null ? String(cell.value) : '';
-                }
-              });
-              if (Object.keys(rowObj).length > 0) {
-                jsonData.push(rowObj);
-              }
-            }
-          });
-
+          const data = new Uint8Array(event.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          const jsonData = XLSX.utils.sheet_to_json(firstSheet);
           // Prepare a local index of existing extinguishers by Asset ID (string)
           // Use loaded state; if not yet loaded, the onSnapshot handler will refresh UI after import
           const existingIndex = new Map(
@@ -1896,79 +1721,16 @@ function App() {
     }
   };
 
-  // Show delete confirmation modal
-  const deleteItem = (item) => {
-    setItemToDelete(item);
-    setShowDeleteConfirmModal(true);
-  };
-
-  // Confirm deletion - soft delete by moving to deletedExtinguishers collection
-  const confirmDeleteItem = async () => {
-    if (!itemToDelete) return;
-
-    try {
-      // Create a copy in deletedExtinguishers collection
-      const deletedData = {
-        ...itemToDelete,
-        originalId: itemToDelete.id,
-        deletedAt: new Date().toISOString(),
-        deletedBy: user.email || user.uid
-      };
-      // Remove the Firestore document id (we'll use originalId to track it)
-      delete deletedData.id;
-
-      await addDoc(collection(db, 'deletedExtinguishers'), deletedData);
-
-      // Delete from extinguishers collection
-      await deleteDoc(doc(db, 'extinguishers', itemToDelete.id));
-
-      setShowDeleteConfirmModal(false);
-      setItemToDelete(null);
-      setEditItem(null);
-      setSelectedItem(null);
-      alert('Fire extinguisher deleted successfully!');
-    } catch (error) {
-      console.error('Error deleting extinguisher:', error);
-      alert('Error deleting fire extinguisher. Please try again.');
-    }
-  };
-
-  // Restore a deleted extinguisher
-  const restoreDeletedItem = async (deletedItem) => {
-    try {
-      // Create a new document in extinguishers collection
-      const restoredData = { ...deletedItem };
-      // Remove deletion metadata
-      delete restoredData.id;
-      delete restoredData.originalId;
-      delete restoredData.deletedAt;
-      delete restoredData.deletedBy;
-
-      // Add back to extinguishers collection
-      await addDoc(collection(db, 'extinguishers'), restoredData);
-
-      // Remove from deletedExtinguishers collection
-      await deleteDoc(doc(db, 'deletedExtinguishers', deletedItem.id));
-
-      alert(`Fire extinguisher ${deletedItem.assetId} restored successfully!`);
-    } catch (error) {
-      console.error('Error restoring extinguisher:', error);
-      alert('Error restoring fire extinguisher. Please try again.');
-    }
-  };
-
-  // Permanently delete a deleted item (from the deleted list)
-  const permanentlyDeleteItem = async (deletedItem) => {
-    if (!window.confirm(`Are you sure you want to PERMANENTLY delete ${deletedItem.assetId}? This cannot be undone.`)) {
-      return;
-    }
-
-    try {
-      await deleteDoc(doc(db, 'deletedExtinguishers', deletedItem.id));
-      alert('Fire extinguisher permanently deleted.');
-    } catch (error) {
-      console.error('Error permanently deleting extinguisher:', error);
-      alert('Error permanently deleting fire extinguisher. Please try again.');
+  const deleteItem = async (item) => {
+    if (window.confirm(`Are you sure you want to delete fire extinguisher ${item.assetId}?`)) {
+      try {
+        await deleteDoc(doc(db, 'extinguishers', item.id));
+        setEditItem(null);
+        alert('Fire extinguisher deleted successfully!');
+      } catch (error) {
+        console.error('Error deleting extinguisher:', error);
+        alert('Error deleting fire extinguisher. Please try again.');
+      }
     }
   };
 
@@ -1990,7 +1752,7 @@ function App() {
   const handleReplaceExtinguisher = async (oldItem, replacementData) => {
     try {
       const { assetId, serial, reason, manufactureDate, notes } = replacementData;
-      
+
       if (!serial || !serial.trim()) {
         alert('Serial number is required for replacement.');
         return;
@@ -2003,66 +1765,76 @@ function App() {
       }
 
       const replacementDate = new Date().toISOString();
+
+      // Create replacement record with full history of old extinguisher
       const replacementRecord = {
         date: replacementDate,
         oldSerial: oldItem.serial || '',
         newSerial: serial.trim(),
+        oldAssetId: oldItem.assetId,
+        newAssetId: (assetId.trim() || oldItem.assetId),
         reason: reason.trim() || '',
         newManufactureDate: manufactureDate.trim() || '',
         notes: notes.trim() || '',
         replacedBy: user?.email || 'Current User',
-        oldAssetId: oldItem.assetId
+        // Preserve the old extinguisher's status at time of replacement
+        oldStatus: oldItem.status || 'fail',
+        oldNotes: oldItem.notes || '',
+        oldCheckedDate: oldItem.checkedDate || null,
+        oldChecklistData: oldItem.checklistData || null,
+        oldInspectionHistory: oldItem.inspectionHistory || []
       };
 
-      // Create new extinguisher record
-      const newExtinguisherData = {
+      // Build updated replacement history
+      const existingReplacementHistory = oldItem.replacementHistory || [];
+      const updatedReplacementHistory = [...existingReplacementHistory, replacementRecord];
+
+      // Update the EXISTING extinguisher record in place (same location)
+      // This replaces the old extinguisher info with new extinguisher info
+      const updatedExtinguisherData = {
         assetId: assetId.trim() || oldItem.assetId,
         serial: serial.trim(),
+        // Keep the same location info
         vicinity: oldItem.vicinity || '',
         parentLocation: oldItem.parentLocation || '',
         section: oldItem.section || 'Main Hospital',
-        status: 'pending',
-        checkedDate: null,
-        notes: notes.trim() || '',
-        manufactureYear: manufactureDate.trim() || '',
-        category: oldItem.category || 'standard',
         location: oldItem.location || null,
+        // New extinguisher is automatically passed (it's brand new and good)
+        status: 'pass',
+        checkedDate: replacementDate,
+        notes: notes.trim() || `Replaced on ${new Date(replacementDate).toLocaleDateString()}`,
+        // Reset checklist data for the new extinguisher (fresh start)
+        checklistData: null,
+        manufactureYear: manufactureDate.trim() || '',
+        category: 'standard', // New extinguisher is standard, not spare/replaced
+        // Keep user/workspace info
         userId: user.uid,
         workspaceId: currentWorkspaceId,
-        createdAt: replacementDate,
-        inspectionHistory: [],
+        // Reset photos for new extinguisher (old photos are in replacement history if needed)
         photos: [],
-        replacementHistory: []
+        // Reset inspection history for new extinguisher (old history is in replacement history)
+        inspectionHistory: [],
+        // Add the replacement record to history
+        replacementHistory: updatedReplacementHistory,
+        // Keep original creation date, add replacement date
+        createdAt: oldItem.createdAt || replacementDate,
+        lastReplacementDate: replacementDate
       };
 
-      const newDocRef = await addDoc(collection(db, 'extinguishers'), newExtinguisherData);
-      replacementRecord.newExtinguisherId = newDocRef.id;
-
-      // Update old extinguisher with replacement history
-      const oldDocRef = doc(db, 'extinguishers', oldItem.id);
-      const oldReplacementHistory = oldItem.replacementHistory || [];
-      await setDoc(oldDocRef, {
-        replacementHistory: [...oldReplacementHistory, replacementRecord]
-      }, { merge: true });
+      // Update the existing document in Firestore
+      const docRef = doc(db, 'extinguishers', oldItem.id);
+      await setDoc(docRef, updatedExtinguisherData, { merge: false });
 
       // Update local state
-      setExtinguishers(prev => {
-        const updated = prev.map(e => {
-          if (e.id === oldItem.id) {
-            return {
-              ...e,
-              replacementHistory: [...oldReplacementHistory, replacementRecord]
-            };
-          }
-          return e;
-        });
-        // Add new extinguisher to local state
-        updated.push({
-          ...newExtinguisherData,
-          id: newDocRef.id
-        });
-        return updated;
-      });
+      setExtinguishers(prev => prev.map(e => {
+        if (e.id === oldItem.id) {
+          return {
+            ...updatedExtinguisherData,
+            id: oldItem.id
+          };
+        }
+        return e;
+      }));
 
       setReplaceItem(null);
       setReplaceForm({
@@ -2073,8 +1845,8 @@ function App() {
         notes: ''
       });
       setSelectedItem(null);
-      
-      alert(`Extinguisher replaced successfully!\n\nNew extinguisher created with Asset ID: ${newExtinguisherData.assetId}\nSerial: ${serial.trim()}`);
+
+      alert(`Extinguisher replaced successfully!\n\nAsset ID: ${updatedExtinguisherData.assetId}\nNew Serial: ${serial.trim()}\nStatus: PASS (new extinguisher)\n\nThe old extinguisher info has been saved to the replacement history.`);
     } catch (error) {
       console.error('Error replacing extinguisher:', error);
       alert(`Error replacing extinguisher: ${error.message}`);
@@ -2183,34 +1955,13 @@ function App() {
     const timestamp = now.toISOString().split('T')[0]; // YYYY-MM-DD format
     const typeLabel = type === 'all' ? 'All' : type === 'passed' ? 'Passed' : 'Failed';
 
-    // Create workbook and worksheet
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Inspections');
-
-    // Add headers from first row keys
-    if (formatted.length > 0) {
-      const headers = Object.keys(formatted[0]);
-      worksheet.addRow(headers);
-
-      // Add data rows
-      formatted.forEach(row => {
-        worksheet.addRow(headers.map(h => row[h] ?? ''));
-      });
-    }
-
-    // Generate Excel file and download
-    workbook.xlsx.writeBuffer().then(buffer => {
-      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${monthName}_${year}_Extinguisher_Checks_${typeLabel}_${timestamp}_Export.xlsx`;
-      a.click();
-      URL.revokeObjectURL(url);
-    });
+    const ws = XLSX.utils.json_to_sheet(formatted);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Inspections');
+    XLSX.writeFile(wb, `${monthName}_${year}_Extinguisher_Checks_${typeLabel}_${timestamp}_Export.xlsx`);
   };
 
-  const exportTimeData = async () => {
+  const exportTimeData = () => {
     const timeData = SECTIONS.map(section => ({
       'Section': section,
       'Time Spent': formatTime(sectionTimes[section] || 0),
@@ -2226,30 +1977,10 @@ function App() {
     const { monthName, year } = getWorkspaceMonthInfo();
     const timestamp = now.toISOString().split('T')[0]; // YYYY-MM-DD format
 
-    // Create workbook and worksheet
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Time Tracking');
-
-    // Add headers from first row keys
-    if (timeData.length > 0) {
-      const headers = Object.keys(timeData[0]);
-      worksheet.addRow(headers);
-
-      // Add data rows
-      timeData.forEach(row => {
-        worksheet.addRow(headers.map(h => row[h] ?? ''));
-      });
-    }
-
-    // Generate Excel file and download
-    const buffer = await workbook.xlsx.writeBuffer();
-    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${monthName}_${year}_Time_Tracking_${timestamp}_Export.xlsx`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const ws = XLSX.utils.json_to_sheet(timeData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Time Tracking');
+    XLSX.writeFile(wb, `${monthName}_${year}_Time_Tracking_${timestamp}_Export.xlsx`);
   };
 
   // Device Sync Export - exports everything needed to sync to another device
@@ -2940,15 +2671,6 @@ function App() {
                 <span className="hidden sm:inline">Calculator</span>
               </button>
               <button
-                onClick={() => navigate('/app/custom-assets')}
-                className="px-2 sm:px-3 py-1.5 sm:py-2 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white rounded flex items-center gap-1 sm:gap-2 text-xs sm:text-sm flex-shrink-0"
-                title="Custom Asset Checker"
-                style={{ minWidth: '44px', minHeight: '44px', WebkitTapHighlightColor: 'rgba(0,0,0,0.1)', touchAction: 'manipulation' }}
-              >
-                <ClipboardList size={16} className="sm:w-[18px] sm:h-[18px]" />
-                <span className="hidden sm:inline">Assets</span>
-              </button>
-              <button
                 onClick={() => setAdminMode(!adminMode)}
                 className={`p-1.5 sm:p-2 hover:bg-gray-600 active:bg-gray-700 rounded flex items-center justify-center gap-1 sm:gap-2 flex-shrink-0 ${adminMode ? 'bg-gray-600' : ''}`}
                 title={adminMode ? 'Exit Admin Mode' : 'Admin Mode'}
@@ -3185,21 +2907,6 @@ function App() {
               </button>
               <button
                 onClick={() => {
-                  setShowDeletedItemsModal(true);
-                  setShowMenu(false);
-                }}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700 transition w-full"
-              >
-                <Trash2 size={20} />
-                View Deleted Items
-                {deletedExtinguishers.length > 0 && (
-                  <span className="ml-auto bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
-                    {deletedExtinguishers.length}
-                  </span>
-                )}
-              </button>
-              <button
-                onClick={() => {
                   exportDatabaseCsv();
                   setShowMenu(false);
                 }}
@@ -3318,7 +3025,7 @@ function App() {
                 View Passed
               </button>
               <button
-                onClick={() => setShowStatusList({ status: 'fail', scope: selectedSection === 'All' ? 'all' : 'section', dateFilter: 'all', sectionFilter: selectedSection === 'All' ? 'all' : selectedSection })}
+                onClick={() => setShowStatusList({ status: 'fail', scope: selectedSection === 'All' ? 'all' : 'section' })}
                 className="flex items-center gap-2 px-4 py-2 bg-rose-500 text-white rounded hover:bg-rose-600 transition w-full"
               >
                 <XCircle size={20} />
@@ -3332,22 +3039,11 @@ function App() {
                 View Spares
               </button>
               <button
-                onClick={() => setShowCategoryList({ category: 'replaced', mode: 'today' })}
+                onClick={() => setShowCategoryList({ category: 'replaced' })}
                 className="flex items-center gap-2 px-4 py-2 bg-amber-500 text-white rounded hover:bg-amber-600 transition w-full"
               >
                 <History size={20} />
                 View Replaced
-              </button>
-              <button
-                onClick={() => setShowWorkCompleted({
-                  date: 'today',
-                  scope: selectedSection === 'All' ? 'all' : 'section',
-                  statusFilter: 'fail'
-                })}
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-500 text-white rounded hover:bg-indigo-600 transition w-full"
-              >
-                <ClipboardList size={20} />
-                Work Completed
               </button>
               {adminMode && (
                 <>
@@ -3394,11 +3090,11 @@ function App() {
           </div>
           <div
             className="bg-white p-4 rounded-lg shadow text-center cursor-pointer hover:shadow-md transition"
-            onClick={() => setShowStatusList({ status: 'fail', scope: selectedSection === 'All' ? 'all' : 'section', dateFilter: 'all', sectionFilter: selectedSection === 'All' ? 'all' : selectedSection })}
+            onClick={() => setShowStatusList({ status: 'fail', scope: selectedSection === 'All' ? 'all' : 'section' })}
             onMouseDown={() => {
               if (statusPressTimerRef.current) clearTimeout(statusPressTimerRef.current);
               statusPressTimerRef.current = setTimeout(() => {
-                setShowStatusList({ status: 'fail', scope: 'all', dateFilter: 'all', sectionFilter: 'all' });
+                setShowStatusList({ status: 'fail', scope: 'all' });
               }, 600);
             }}
             onMouseUp={() => { if (statusPressTimerRef.current) { clearTimeout(statusPressTimerRef.current); statusPressTimerRef.current = null; } }}
@@ -3406,7 +3102,7 @@ function App() {
             onTouchStart={() => {
               if (statusPressTimerRef.current) clearTimeout(statusPressTimerRef.current);
               statusPressTimerRef.current = setTimeout(() => {
-                setShowStatusList({ status: 'fail', scope: 'all', dateFilter: 'all', sectionFilter: 'all' });
+                setShowStatusList({ status: 'fail', scope: 'all' });
               }, 600);
             }}
             onTouchEnd={() => { if (statusPressTimerRef.current) { clearTimeout(statusPressTimerRef.current); statusPressTimerRef.current = null; } }}
@@ -3429,121 +3125,50 @@ function App() {
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-xl font-bold">
                   {showStatusList.status === 'pass' ? 'Passed' : 'Failed'} Extinguishers
-                  {showStatusList.sectionFilter && showStatusList.sectionFilter !== 'all'
-                    ? ` — ${showStatusList.sectionFilter}`
-                    : ' — All Sections'}
-                  {showStatusList.status === 'fail' && showStatusList.dateFilter && showStatusList.dateFilter !== 'all' && (
-                    <span className="text-sm font-normal text-gray-500 ml-2">
-                      ({showStatusList.dateFilter === 'today' ? 'Today' :
-                        showStatusList.dateFilter === 'week' ? 'This Week' : 'This Month'})
-                    </span>
-                  )}
+                  {showStatusList.scope === 'section' && selectedSection !== 'All' ? ` — ${selectedSection}` : ' — All Sections'}
                 </h3>
                 <button onClick={() => setShowStatusList(null)}>
                   <X size={24} />
                 </button>
               </div>
-              {/* Filter Controls */}
-              <div className="flex flex-wrap items-center gap-3 mb-4">
-                {/* Date Filter - only show for 'fail' status */}
-                {showStatusList.status === 'fail' && (
-                  <div className="flex items-center gap-2">
-                    <label className="text-sm text-gray-700">When:</label>
-                    <select
-                      value={showStatusList.dateFilter || 'all'}
-                      onChange={(e) => setShowStatusList(prev => ({ ...prev, dateFilter: e.target.value }))}
-                      className="p-2 border rounded"
-                    >
-                      <option value="today">Today</option>
-                      <option value="week">This Week</option>
-                      <option value="month">This Month</option>
-                      <option value="all">All Time</option>
-                    </select>
-                  </div>
-                )}
-                {/* Section Filter */}
-                <div className="flex items-center gap-2">
-                  <label className="text-sm text-gray-700">Section:</label>
-                  <select
-                    value={showStatusList.sectionFilter || 'all'}
-                    onChange={(e) => setShowStatusList(prev => ({ ...prev, sectionFilter: e.target.value }))}
-                    className="p-2 border rounded"
-                  >
-                    <option value="all">All Sections</option>
-                    {SECTIONS.map(section => (
-                      <option key={section} value={section}>{section}</option>
-                    ))}
-                  </select>
-                </div>
+              <div className="flex items-center gap-3 mb-4">
+                <label className="text-sm text-gray-700">Scope:</label>
+                <select
+                  value={showStatusList.scope}
+                  onChange={(e) => setShowStatusList(prev => ({ ...prev, scope: e.target.value }))}
+                  className="p-2 border rounded"
+                >
+                  <option value="section">Current Section</option>
+                  <option value="all">All Sections</option>
+                </select>
               </div>
               <div className="max-h-[70vh] overflow-y-auto">
                 {(() => {
-                  const effectiveSection = showStatusList.sectionFilter || 'all';
-                  const dateFilter = showStatusList.dateFilter || 'all';
-
+                  const scopeIsSection = showStatusList.scope === 'section' && selectedSection !== 'All';
                   const list = extinguishers
-                    // Filter by status
                     .filter(e => String(e.status || '').toLowerCase() === showStatusList.status)
-                    // For 'fail' status only: exclude replaced items (they have replacement history)
-                    .filter(e => {
-                      if (showStatusList.status !== 'fail') return true;
-                      return !Array.isArray(e.replacementHistory) || e.replacementHistory.length === 0;
-                    })
-                    // Filter by section
-                    .filter(e => effectiveSection === 'all' || e.section === effectiveSection)
-                    // For 'fail' status only: apply date filter
-                    .filter(e => {
-                      if (showStatusList.status !== 'fail') return true;
-                      return isDateInRange(e.checkedDate, dateFilter);
-                    })
-                    // Sort: for failed items, sort by date descending; for passed, sort by assetId
-                    .sort((a, b) => {
-                      if (showStatusList.status === 'fail') {
-                        const aTime = a.checkedDate ? new Date(a.checkedDate).getTime() : 0;
-                        const bTime = b.checkedDate ? new Date(b.checkedDate).getTime() : 0;
-                        return bTime - aTime; // Most recent first
-                      }
-                      return String(a.assetId || '').localeCompare(String(b.assetId || ''));
-                    });
-
+                    .filter(e => !scopeIsSection || e.section === selectedSection)
+                    .sort((a, b) => String(a.assetId || '').localeCompare(String(b.assetId || '')));
                   if (list.length === 0) {
                     return <div className="text-gray-500">No items found.</div>;
                   }
                   return (
-                    <>
-                      <div className="text-sm text-gray-600 mb-2">
-                        {list.length} item{list.length !== 1 ? 's' : ''} {showStatusList.status === 'fail' ? 'needing attention' : 'found'}
-                      </div>
-                      <div className="space-y-2">
-                        {list.map(item => (
-                          <div key={item.id} className={`p-3 border rounded flex items-center justify-between ${
-                            showStatusList.status === 'fail' ? 'bg-red-50 border-red-200' : 'bg-gray-50'
-                          }`}>
-                            <div className="flex-1">
-                              <div className="font-semibold">{item.assetId}</div>
-                              <div className="text-xs text-gray-600">
-                                {item.section} • {item.vicinity}
-                                {item.parentLocation ? ` • ${item.parentLocation}` : ''}
-                              </div>
-                              {/* Show failed date for fail status */}
-                              {showStatusList.status === 'fail' && item.checkedDate && (
-                                <div className="text-xs text-red-600">
-                                  Failed: {new Date(item.checkedDate).toLocaleDateString()} at {
-                                    new Date(item.checkedDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                                  }
-                                </div>
-                              )}
-                            </div>
-                            <button
-                              className="text-blue-600 hover:underline ml-2"
-                              onClick={() => { setShowStatusList(null); navigate(`/app/extinguisher/${item.assetId}`); }}
-                            >
-                              View
-                            </button>
+                    <div className="space-y-2">
+                      {list.map(item => (
+                        <div key={item.id} className="p-3 border rounded flex items-center justify-between bg-gray-50">
+                          <div>
+                            <div className="font-semibold">{item.assetId}</div>
+                            <div className="text-xs text-gray-600">{item.section} • {item.vicinity} {item.parentLocation ? `• ${item.parentLocation}` : ''}</div>
                           </div>
-                        ))}
-                      </div>
-                    </>
+                          <button
+                            className="text-blue-600 hover:underline"
+                            onClick={() => { setShowStatusList(null); navigate(`/app/extinguisher/${item.assetId}`); }}
+                          >
+                            View
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   );
                 })()}
               </div>
@@ -3556,103 +3181,13 @@ function App() {
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
             <div className="bg-white rounded-lg p-6 max-w-3xl w-full my-8">
               <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-bold capitalize">
-                  {showCategoryList.category === 'replaced' && showCategoryList.mode === 'today'
-                    ? 'Replacements Today'
-                    : `${showCategoryList.category} Extinguishers`}
-                </h3>
+                <h3 className="text-xl font-bold capitalize">{showCategoryList.category} Extinguishers</h3>
                 <button onClick={() => setShowCategoryList(null)}>
                   <X size={24} />
                 </button>
               </div>
-              {/* Controls specific to Replaced list */}
-              {showCategoryList.category === 'replaced' && (
-                <div className="flex items-center gap-3 mb-4">
-                  <label className="text-sm text-gray-700">Show:</label>
-                  <select
-                    value={showCategoryList.mode || 'today'}
-                    onChange={(e) => setShowCategoryList(prev => ({ ...prev, mode: e.target.value }))}
-                    className="p-2 border rounded"
-                  >
-                    <option value="today">Today</option>
-                    <option value="all">All-time</option>
-                  </select>
-                </div>
-              )}
               <div className="max-h-[70vh] overflow-y-auto">
                 {(() => {
-                  // Special handling for 'replaced' quick list to show only replacements done today
-                  if (showCategoryList.category === 'replaced') {
-                    const now = new Date();
-                    const isSameLocalDay = (iso) => {
-                      if (!iso) return false;
-                      const d = new Date(iso);
-                      return d.getFullYear() === now.getFullYear() &&
-                        d.getMonth() === now.getMonth() &&
-                        d.getDate() === now.getDate();
-                    };
-
-                    // Build a map for quick lookup of new extinguisher by id
-                    const byId = new Map(extinguishers.map(e => [e.id, e]));
-
-                    // Collect replacement events that happened today and resolve to new extinguisher items
-                    const replacementsToday = [];
-                    for (const oldItem of extinguishers) {
-                      const history = Array.isArray(oldItem.replacementHistory) ? oldItem.replacementHistory : [];
-                      for (const entry of history) {
-                        const include = (showCategoryList.mode === 'all') || isSameLocalDay(entry.date);
-                        if (include) {
-                          const newItem = entry.newExtinguisherId ? byId.get(entry.newExtinguisherId) : null;
-                          replacementsToday.push({ entry, oldItem, newItem });
-                        }
-                      }
-                    }
-
-                    // Debug info for troubleshooting
-                    try {
-                      console.log('[Replacements Today] total events:', replacementsToday.length);
-                    } catch { /* ignore logging errors */ }
-
-                    if (replacementsToday.length === 0) {
-                      return <div className="text-gray-500">No replacements found.</div>;
-                    }
-
-                    // Sort by time descending (most recent first)
-                    replacementsToday.sort((a, b) => new Date(b.entry.date) - new Date(a.entry.date));
-
-                    return (
-                      <div className="space-y-2">
-                        {replacementsToday.map((row, idx) => (
-                          <div key={`${row.entry.newExtinguisherId || row.oldItem.id}-${idx}`} className="p-3 border rounded flex items-center justify-between bg-gray-50">
-                            <div>
-                              <div className="font-semibold">
-                                {row.newItem?.assetId || row.oldItem.assetId}
-                                <span className="text-gray-500 font-normal"> (new)</span>
-                              </div>
-                              <div className="text-xs text-gray-600">
-                                From {row.oldItem.assetId} • {row.oldItem.section} • {row.oldItem.vicinity} {row.oldItem.parentLocation ? `• ${row.oldItem.parentLocation}` : ''}
-                              </div>
-                              <div className="text-xs text-gray-500">
-                                Replaced at {new Date(row.entry.date).toLocaleTimeString()} by {row.entry.replacedBy || 'Unknown'}
-                              </div>
-                            </div>
-                            <button
-                              className="text-blue-600 hover:underline"
-                              onClick={() => {
-                                setShowCategoryList(null);
-                                const destAsset = row.newItem?.assetId || row.oldItem.assetId;
-                                navigate(`/app/extinguisher/${destAsset}`);
-                              }}
-                            >
-                              View
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  }
-
-                  // Default category list (e.g., spares)
                   const list = extinguishers
                     .filter(e => (e.category || 'standard') === showCategoryList.category)
                     .sort((a, b) => String(a.assetId || '').localeCompare(String(b.assetId || '')));
@@ -3670,161 +3205,6 @@ function App() {
                           <button
                             className="text-blue-600 hover:underline"
                             onClick={() => { setShowCategoryList(null); navigate(`/app/extinguisher/${item.assetId}`); }}
-                          >
-                            View
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Daily Work Completed Modal */}
-        {showWorkCompleted && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
-            <div className="bg-white rounded-lg p-6 max-w-3xl w-full my-8">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-bold">
-                  Work Completed
-                  {showWorkCompleted.scope === 'section' && selectedSection !== 'All'
-                    ? ` — ${selectedSection}`
-                    : ' — All Sections'}
-                </h3>
-                <button onClick={() => setShowWorkCompleted(null)}>
-                  <X size={24} />
-                </button>
-              </div>
-
-              {/* Filter Controls */}
-              <div className="flex flex-wrap items-center gap-3 mb-4">
-                {/* Date Filter */}
-                <div className="flex items-center gap-2">
-                  <label className="text-sm text-gray-700">Date:</label>
-                  <select
-                    value={showWorkCompleted.date}
-                    onChange={(e) => setShowWorkCompleted(prev => ({ ...prev, date: e.target.value }))}
-                    className="p-2 border rounded"
-                  >
-                    {generateDateOptions().map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Scope Filter */}
-                <div className="flex items-center gap-2">
-                  <label className="text-sm text-gray-700">Scope:</label>
-                  <select
-                    value={showWorkCompleted.scope}
-                    onChange={(e) => setShowWorkCompleted(prev => ({ ...prev, scope: e.target.value }))}
-                    className="p-2 border rounded"
-                  >
-                    <option value="section">Current Section</option>
-                    <option value="all">All Sections</option>
-                  </select>
-                </div>
-
-                {/* Status Filter */}
-                <div className="flex items-center gap-2">
-                  <label className="text-sm text-gray-700">Status:</label>
-                  <select
-                    value={showWorkCompleted.statusFilter}
-                    onChange={(e) => setShowWorkCompleted(prev => ({ ...prev, statusFilter: e.target.value }))}
-                    className="p-2 border rounded"
-                  >
-                    <option value="fail">Failed Only</option>
-                    <option value="pass">Passed Only</option>
-                    <option value="all">All Status Changes</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Results List */}
-              <div className="max-h-[70vh] overflow-y-auto">
-                {(() => {
-                  const scopeIsSection = showWorkCompleted.scope === 'section' && selectedSection !== 'All';
-
-                  const list = extinguishers
-                    .filter(e => {
-                      // Must have a checkedDate that matches the selected date
-                      if (!isDateMatchingFilter(e.checkedDate, showWorkCompleted.date)) return false;
-
-                      // Status must be non-pending (has been inspected)
-                      const status = normalizeStatus(e.status);
-                      if (status === 'pending') return false;
-
-                      // Apply status filter
-                      if (showWorkCompleted.statusFilter !== 'all' && status !== showWorkCompleted.statusFilter) {
-                        return false;
-                      }
-
-                      // Apply scope filter
-                      if (scopeIsSection && e.section !== selectedSection) return false;
-
-                      return true;
-                    })
-                    .sort((a, b) => {
-                      // Sort by checkedDate descending (most recent first)
-                      const aTime = a.checkedDate ? new Date(a.checkedDate).getTime() : 0;
-                      const bTime = b.checkedDate ? new Date(b.checkedDate).getTime() : 0;
-                      return bTime - aTime;
-                    });
-
-                  if (list.length === 0) {
-                    return (
-                      <div className="text-gray-500 text-center py-8">
-                        No {showWorkCompleted.statusFilter === 'all' ? '' : showWorkCompleted.statusFilter + ' '}
-                        inspections found for the selected date.
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div className="space-y-2">
-                      <div className="text-sm text-gray-600 mb-2">
-                        {list.length} item{list.length !== 1 ? 's' : ''} found
-                      </div>
-                      {list.map(item => (
-                        <div
-                          key={item.id}
-                          className={`p-3 border rounded flex items-center justify-between ${
-                            normalizeStatus(item.status) === 'fail'
-                              ? 'bg-red-50 border-red-200'
-                              : 'bg-green-50 border-green-200'
-                          }`}
-                        >
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-semibold">{item.assetId}</span>
-                              <span className={`text-xs px-2 py-0.5 rounded ${
-                                normalizeStatus(item.status) === 'fail'
-                                  ? 'bg-red-200 text-red-800'
-                                  : 'bg-green-200 text-green-800'
-                              }`}>
-                                {normalizeStatus(item.status).toUpperCase()}
-                              </span>
-                            </div>
-                            <div className="text-xs text-gray-600">
-                              {item.section} • {item.vicinity}
-                              {item.parentLocation ? ` • ${item.parentLocation}` : ''}
-                            </div>
-                            <div className="text-xs text-gray-500">
-                              Checked: {new Date(item.checkedDate).toLocaleTimeString([], {
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              })}
-                            </div>
-                          </div>
-                          <button
-                            className="text-blue-600 hover:underline ml-2"
-                            onClick={() => {
-                              setShowWorkCompleted(null);
-                              navigate(`/app/extinguisher/${item.assetId}`);
-                            }}
                           >
                             View
                           </button>
@@ -3974,15 +3354,6 @@ function App() {
             <Route
               path="calculator"
               element={<Calculator />}
-            />
-            <Route
-              path="custom-assets"
-              element={
-                <CustomAssetChecker
-                  user={user}
-                  currentWorkspaceId={currentWorkspaceId}
-                />
-              }
             />
           </Routes>
         </div>
@@ -4388,8 +3759,8 @@ function App() {
       />
 
       {selectedItem && !editItem && (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-start justify-center pt-2 px-2 pb-2 z-50 overflow-y-auto">
-          <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-lg p-4 md:p-6 max-w-2xl w-full my-2 border-2 border-red-600 shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-lg p-6 max-w-2xl w-full my-8 border-2 border-red-600 shadow-2xl">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-2xl font-bold text-red-400">Inspect Fire Extinguisher</h3>
               <button
@@ -4422,28 +3793,6 @@ function App() {
                   <div className="text-sm text-gray-400">Serial Number</div>
                   <div className="font-mono text-white">{selectedItem.serial}</div>
                 </div>
-                <div className="col-span-2">
-                  <div className="text-sm text-gray-400 mb-1">Manufacture Date</div>
-                  <input
-                    type="text"
-                    value={selectedItem.manufactureDate || ''}
-                    onChange={(e) => {
-                      setSelectedItem({ ...selectedItem, manufactureDate: e.target.value });
-                    }}
-                    onBlur={async (e) => {
-                      const newValue = e.target.value.trim();
-                      try {
-                        const docRef = doc(db, 'extinguishers', selectedItem.id);
-                        await setDoc(docRef, { manufactureDate: newValue }, { merge: true });
-                      } catch (err) {
-                        console.error('Error saving manufacture date:', err);
-                        alert('Error saving date. Please try again.');
-                      }
-                    }}
-                    placeholder="e.g., 2019, 03/2019, or 2019-03"
-                    className="w-full p-2 border border-gray-600 rounded-lg bg-gray-700 text-white placeholder-gray-500 focus:ring-2 focus:ring-red-500 focus:border-red-500 text-sm"
-                  />
-                </div>
               </div>
 
               <div>
@@ -4455,6 +3804,36 @@ function App() {
               <div>
                 <div className="text-sm text-gray-400">Section</div>
                 <div className="font-medium text-white">{selectedItem.section}</div>
+              </div>
+
+              {/* Manufacture Year / Maintenance Date */}
+              <div>
+                <div className="text-sm text-gray-400 mb-1">Mfg Year / 6-Year / Hydro Test</div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={selectedItem.manufactureYear || ''}
+                    onChange={async (e) => {
+                      const newValue = e.target.value;
+                      // Update local state immediately for responsive UI
+                      setSelectedItem({ ...selectedItem, manufactureYear: newValue });
+                    }}
+                    onBlur={async (e) => {
+                      // Save to database on blur
+                      const newValue = e.target.value.trim();
+                      try {
+                        const docRef = doc(db, 'extinguishers', selectedItem.id);
+                        await setDoc(docRef, { manufactureYear: newValue }, { merge: true });
+                      } catch (err) {
+                        console.error('Error saving manufacture year:', err);
+                        alert('Error saving year. Please try again.');
+                      }
+                    }}
+                    placeholder="e.g., 2019 / 6yr: 2025 / Hydro: 2025"
+                    className="flex-1 p-2 border border-gray-600 rounded-lg bg-gray-700 text-white placeholder-gray-500 focus:ring-2 focus:ring-red-500 focus:border-red-500 text-sm"
+                  />
+                </div>
+                <div className="text-xs text-gray-500 mt-1">Enter manufacture year, 6-year maintenance, or hydrostatic test dates</div>
               </div>
 
               {/* Location chip with Open in Maps */}
@@ -4664,13 +4043,6 @@ function App() {
                 <RotateCcw size={20} />
                 Replace Extinguisher
               </button>
-              <button
-                onClick={() => setSelectedItem(null)}
-                className="w-full bg-gray-600 text-white p-3 rounded-lg hover:bg-gray-700 flex items-center justify-center gap-2 font-semibold transition shadow-lg"
-              >
-                <X size={20} />
-                Cancel
-              </button>
             </div>
           </div>
         </div>
@@ -4703,17 +4075,6 @@ function App() {
                   type="text"
                   value={editItem.serial}
                   onChange={(e) => setEditItem({...editItem, serial: e.target.value})}
-                  className="w-full p-2 border border-gray-300 rounded-lg"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Manufacture Date</label>
-                <input
-                  type="text"
-                  value={editItem.manufactureDate || ''}
-                  onChange={(e) => setEditItem({...editItem, manufactureDate: e.target.value})}
-                  placeholder="e.g., 2019, 03/2019, or 2019-03"
                   className="w-full p-2 border border-gray-300 rounded-lg"
                 />
               </div>
@@ -4878,151 +4239,6 @@ function App() {
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
-      {showDeleteConfirmModal && itemToDelete && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-[60]">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
-                <Trash2 className="text-red-600" size={24} />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-gray-900">Delete Fire Extinguisher?</h3>
-                <p className="text-sm text-gray-500">This action can be undone from the deleted items list</p>
-              </div>
-            </div>
-
-            <div className="bg-gray-50 rounded-lg p-4 mb-4">
-              <p className="text-sm text-gray-600">
-                <strong>Asset ID:</strong> {itemToDelete.assetId}
-              </p>
-              {itemToDelete.serial && (
-                <p className="text-sm text-gray-600">
-                  <strong>Serial:</strong> {itemToDelete.serial}
-                </p>
-              )}
-              <p className="text-sm text-gray-600">
-                <strong>Section:</strong> {itemToDelete.section}
-              </p>
-              {itemToDelete.vicinity && (
-                <p className="text-sm text-gray-600">
-                  <strong>Location:</strong> {itemToDelete.vicinity}
-                </p>
-              )}
-            </div>
-
-            <p className="text-sm text-gray-600 mb-4">
-              Are you sure you want to delete this fire extinguisher? You can restore it later from the "View Deleted Items" menu.
-            </p>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowDeleteConfirmModal(false);
-                  setItemToDelete(null);
-                }}
-                className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmDeleteItem}
-                className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 flex items-center justify-center gap-2"
-              >
-                <Trash2 size={18} />
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Deleted Items Modal */}
-      {showDeletedItemsModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-lg p-6 max-w-4xl w-full my-8 max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="flex justify-between items-center mb-4">
-              <div>
-                <h3 className="text-xl font-bold">Deleted Fire Extinguishers</h3>
-                <p className="text-sm text-gray-500">{deletedExtinguishers.length} item{deletedExtinguishers.length !== 1 ? 's' : ''} in trash</p>
-              </div>
-              <button onClick={() => setShowDeletedItemsModal(false)}>
-                <X size={24} />
-              </button>
-            </div>
-
-            {deletedExtinguishers.length === 0 ? (
-              <div className="text-center py-12 text-gray-500">
-                <Trash2 size={48} className="mx-auto mb-4 opacity-50" />
-                <p>No deleted items</p>
-                <p className="text-sm">Deleted fire extinguishers will appear here</p>
-              </div>
-            ) : (
-              <div className="overflow-y-auto flex-1">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 sticky top-0">
-                    <tr>
-                      <th className="text-left p-3 font-medium text-gray-600">Asset ID</th>
-                      <th className="text-left p-3 font-medium text-gray-600">Serial</th>
-                      <th className="text-left p-3 font-medium text-gray-600">Section</th>
-                      <th className="text-left p-3 font-medium text-gray-600">Deleted</th>
-                      <th className="text-left p-3 font-medium text-gray-600">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {deletedExtinguishers.map((item) => (
-                      <tr key={item.id} className="hover:bg-gray-50">
-                        <td className="p-3 font-medium">{item.assetId}</td>
-                        <td className="p-3 text-gray-600">{item.serial || '-'}</td>
-                        <td className="p-3 text-gray-600">{item.section}</td>
-                        <td className="p-3 text-gray-600">
-                          <div className="text-xs">
-                            {new Date(item.deletedAt).toLocaleDateString()}
-                            <span className="text-gray-400 ml-1">
-                              {new Date(item.deletedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          </div>
-                          {item.deletedBy && (
-                            <div className="text-xs text-gray-400">{item.deletedBy}</div>
-                          )}
-                        </td>
-                        <td className="p-3">
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => restoreDeletedItem(item)}
-                              className="px-3 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600 flex items-center gap-1"
-                            >
-                              <RotateCw size={14} />
-                              Restore
-                            </button>
-                            <button
-                              onClick={() => permanentlyDeleteItem(item)}
-                              className="px-3 py-1 bg-red-500 text-white text-xs rounded hover:bg-red-600 flex items-center gap-1"
-                            >
-                              <Trash2 size={14} />
-                              Permanent
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            <div className="border-t pt-4 mt-4">
-              <button
-                onClick={() => setShowDeletedItemsModal(false)}
-                className="w-full px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Replace Extinguisher Modal */}
       {replaceItem && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
@@ -5049,7 +4265,10 @@ function App() {
                   <strong>Replacing:</strong> Asset #{replaceItem.assetId} • Serial: {replaceItem.serial || 'N/A'}
                 </p>
                 <p className="text-xs text-yellow-700 mt-1">
-                  A new extinguisher record will be created. The old extinguisher will retain all history.
+                  Location: {replaceItem.vicinity || replaceItem.parentLocation || 'N/A'} • Status: {replaceItem.status?.toUpperCase() || 'N/A'}
+                </p>
+                <p className="text-xs text-yellow-700 mt-1">
+                  The new extinguisher info will replace the old one at this location. Status will be set to PASS. Old extinguisher details are saved to history.
                 </p>
               </div>
 
@@ -5121,9 +4340,9 @@ function App() {
                 />
               </div>
 
-              <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                <p className="text-xs text-gray-600">
-                  <strong>Note:</strong> The replacement will be timestamped automatically. The old extinguisher will keep all inspection history, photos, and notes.
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                <p className="text-xs text-green-700">
+                  <strong>What happens:</strong> The new extinguisher will be marked as PASS and will replace the failed one at this location. All old extinguisher info (serial, inspection history, photos, notes) is preserved in the replacement history for record-keeping.
                 </p>
               </div>
             </div>
@@ -5135,7 +4354,7 @@ function App() {
                     alert('Serial number is required.');
                     return;
                   }
-                  if (window.confirm(`Replace extinguisher ${replaceItem.assetId}?\n\nNew serial: ${replaceForm.serial}\n\nThis will create a new extinguisher record.`)) {
+                  if (window.confirm(`Replace extinguisher ${replaceItem.assetId}?\n\nOld Serial: ${replaceItem.serial || 'N/A'}\nNew Serial: ${replaceForm.serial}\n\nThe new extinguisher will be marked as PASS and the old info will be saved to history.`)) {
                     handleReplaceExtinguisher(replaceItem, replaceForm);
                   }
                 }}
