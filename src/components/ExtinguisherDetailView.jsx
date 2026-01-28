@@ -1,31 +1,133 @@
-import React, { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, MapPin, Calendar, CheckCircle, XCircle, Circle, Image as ImageIcon, ChevronDown, ChevronUp, ExternalLink, RotateCcw } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { ArrowLeft, MapPin, Calendar, CheckCircle, XCircle, Circle, Image as ImageIcon, ChevronDown, ChevronUp, ExternalLink, RotateCcw, Edit2, Camera, CalendarClock } from 'lucide-react';
 
 /**
- * ExtinguisherDetailView - Full-page view showing all information about a fire extinguisher
+ * ExtinguisherDetailView - Unified full-page view for fire extinguisher inspection
  *
  * Features:
- * - Optimized photo loading (thumbnails first, lazy load on demand)
- * - Complete inspection history with photos
- * - Asset details prominently displayed
- * - Navigation from main list and section detail
+ * - Shows details for all extinguishers
+ * - When status is 'pending': shows 13-point inspection checklist with Pass/Fail buttons
+ * - When status is 'pass' or 'fail': shows read-only inspection details
+ * - Edit/Replace buttons always available
+ * - Proper navigation state handling for cancel/back
  */
-const ExtinguisherDetailView = ({ extinguishers }) => {
+const ExtinguisherDetailView = ({
+  extinguishers,
+  onPass,
+  onFail,
+  onEdit,
+  onReplace,
+  onSaveNotes,
+  onUpdateExpirationDate
+}) => {
   const { assetId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+
   const [showAllPhotos, setShowAllPhotos] = useState(false);
   const [expandedInspection, setExpandedInspection] = useState(null);
 
+  // Inspection state (only used when status is pending)
+  const [checklist, setChecklist] = useState({
+    pinPresent: 'pass',
+    tamperSealIntact: 'pass',
+    gaugeCorrectPressure: 'pass',
+    weightCorrect: 'pass',
+    noDamage: 'pass',
+    inDesignatedLocation: 'pass',
+    clearlyVisible: 'pass',
+    nearestUnder75ft: 'pass',
+    topUnder5ft: 'pass',
+    bottomOver4in: 'pass',
+    mountedSecurely: 'pass',
+    inspectionWithin30Days: 'pass',
+    tagSignedDated: 'pass'
+  });
+  const [notes, setNotes] = useState('');
+  const [photoFile, setPhotoFile] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState('');
+  const [gps, setGps] = useState(null);
+  const [gpsLoading, setGpsLoading] = useState(false);
+  const [notesSaving, setNotesSaving] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
+  const notesSaveTimeoutRef = useRef(null);
+
+  // Expiration date inline edit state
+  const [editingExpiration, setEditingExpiration] = useState(false);
+  const [tempExpirationDate, setTempExpirationDate] = useState('');
+
   // Find the extinguisher by assetId
   const extinguisher = extinguishers.find(e => e.assetId === assetId);
+
+  // Get return path from navigation state or default to /app
+  const returnPath = location.state?.returnPath || '/app';
+
+  // Initialize notes and checklist when extinguisher changes
+  useEffect(() => {
+    if (extinguisher) {
+      setNotes(extinguisher.notes || '');
+      if (extinguisher.checklistData) {
+        setChecklist(extinguisher.checklistData);
+      } else {
+        setChecklist({
+          pinPresent: 'pass',
+          tamperSealIntact: 'pass',
+          gaugeCorrectPressure: 'pass',
+          weightCorrect: 'pass',
+          noDamage: 'pass',
+          inDesignatedLocation: 'pass',
+          clearlyVisible: 'pass',
+          nearestUnder75ft: 'pass',
+          topUnder5ft: 'pass',
+          bottomOver4in: 'pass',
+          mountedSecurely: 'pass',
+          inspectionWithin30Days: 'pass',
+          tagSignedDated: 'pass'
+        });
+      }
+      setTempExpirationDate(extinguisher.expirationDate || '');
+    }
+  }, [extinguisher?.id]);
+
+  // Auto-save notes with debouncing
+  useEffect(() => {
+    if (!extinguisher || !notes || extinguisher.status !== 'pending') return;
+
+    if (notesSaveTimeoutRef.current) {
+      clearTimeout(notesSaveTimeoutRef.current);
+    }
+
+    notesSaveTimeoutRef.current = setTimeout(async () => {
+      if (extinguisher && notes !== (extinguisher.notes || '')) {
+        setNotesSaving(true);
+        setNotesSaved(false);
+        try {
+          const inspectionData = { checklistData: checklist, notes, photo: photoFile || null, gps: gps || null };
+          await onSaveNotes?.(extinguisher, notes, inspectionData);
+          setNotesSaved(true);
+          setTimeout(() => setNotesSaved(false), 2000);
+        } catch (error) {
+          console.error('Auto-save failed:', error);
+        } finally {
+          setNotesSaving(false);
+        }
+      }
+    }, 2000);
+
+    return () => {
+      if (notesSaveTimeoutRef.current) {
+        clearTimeout(notesSaveTimeoutRef.current);
+      }
+    };
+  }, [notes, extinguisher, checklist, photoFile, gps, onSaveNotes]);
 
   if (!extinguisher) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-gray-800 via-gray-900 to-black text-white p-4">
         <div className="max-w-4xl mx-auto">
           <button
-            onClick={() => navigate(-1)}
+            onClick={() => navigate(returnPath)}
             className="mb-4 flex items-center gap-2 text-blue-400 hover:text-blue-300"
           >
             <ArrowLeft size={20} />
@@ -49,20 +151,19 @@ const ExtinguisherDetailView = ({ extinguishers }) => {
 
   const currentStatus = getStatusDisplay(extinguisher.status);
   const StatusIcon = currentStatus.icon;
+  const isPending = extinguisher.status === 'pending';
 
   // Prepare photos for optimized loading
   const mainPhoto = extinguisher.photos && extinguisher.photos.length > 0
     ? extinguisher.photos[0].url
-    : extinguisher.photoUrl; // Fallback to old single photo
+    : extinguisher.photoUrl;
 
   const lastInspectionPhoto = extinguisher.lastInspectionPhotoUrl;
 
-  // All gallery photos (excluding the first which is shown as main)
   const additionalPhotos = extinguisher.photos && extinguisher.photos.length > 1
     ? extinguisher.photos.slice(1)
     : [];
 
-  // Get all inspection photos from history
   const inspectionHistory = extinguisher.inspectionHistory || [];
   const sortedHistory = [...inspectionHistory].sort((a, b) =>
     new Date(b.date) - new Date(a.date)
@@ -81,14 +182,82 @@ const ExtinguisherDetailView = ({ extinguishers }) => {
     });
   };
 
+  const formatExpirationDate = (dateString) => {
+    if (!dateString) return null;
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
+    });
+  };
+
   const totalPhotos = (extinguisher.photos?.length || 0) + inspectionHistory.filter(h => h.photoUrl).length;
 
+  const checklistSummary = () => {
+    const failed = Object.entries(checklist).filter(([, status]) => status === 'fail').map(([k]) => k);
+    return failed.length > 0 ? `Failed items: ${failed.join(', ')}. ${notes}`.trim() : notes;
+  };
+
+  const handleInspection = (status) => {
+    const inspectionData = { checklistData: checklist, notes, photo: photoFile || null, gps: gps || null };
+
+    if (status === 'pass') {
+      onPass?.(extinguisher, checklistSummary(), inspectionData);
+    } else {
+      onFail?.(extinguisher, checklistSummary(), inspectionData);
+    }
+
+    // Navigate back after inspection
+    navigate(returnPath);
+  };
+
+  const handleCancel = () => {
+    navigate(returnPath);
+  };
+
+  const handleEditClick = () => {
+    onEdit?.(extinguisher);
+  };
+
+  const handleReplaceClick = () => {
+    onReplace?.(extinguisher);
+  };
+
+  const handleSaveExpirationDate = async () => {
+    if (onUpdateExpirationDate) {
+      await onUpdateExpirationDate(extinguisher, tempExpirationDate);
+    }
+    setEditingExpiration(false);
+  };
+
+  const captureGps = () => {
+    if (!('geolocation' in navigator)) {
+      alert('Geolocation not supported on this device/browser.');
+      return;
+    }
+    setGpsLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude: lat, longitude: lng, accuracy, altitude, altitudeAccuracy } = pos.coords;
+        setGps({ lat, lng, accuracy, altitude, altitudeAccuracy, capturedAt: new Date().toISOString() });
+        setGpsLoading(false);
+      },
+      (err) => {
+        console.warn('GPS error:', err);
+        alert('Unable to get GPS location. Please ensure location services are enabled.');
+        setGpsLoading(false);
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+    );
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-b from-gray-800 via-gray-900 to-black text-white p-4 pb-20">
+    <div className="min-h-screen bg-gradient-to-b from-gray-800 via-gray-900 to-black text-white p-4 pb-32">
       <div className="max-w-4xl mx-auto">
         {/* Header with Back Button */}
         <button
-          onClick={() => navigate(-1)}
+          onClick={handleCancel}
           className="mb-4 flex items-center gap-2 text-blue-400 hover:text-blue-300 transition-colors"
         >
           <ArrowLeft size={20} />
@@ -102,7 +271,7 @@ const ExtinguisherDetailView = ({ extinguishers }) => {
               <h1 className="text-2xl font-bold mb-2">Asset #{extinguisher.assetId}</h1>
               <div className="space-y-1 text-gray-300">
                 <p><span className="font-semibold">Serial:</span> {extinguisher.serial || 'N/A'}</p>
-                <p><span className="font-semibold">Manufacture Date:</span> {extinguisher.manufactureDate || 'N/A'}</p>
+                <p><span className="font-semibold">Manufacture Date:</span> {extinguisher.manufactureDate || extinguisher.manufactureYear || 'N/A'}</p>
                 <p><span className="font-semibold">Section:</span> {extinguisher.section}</p>
               </div>
             </div>
@@ -132,8 +301,56 @@ const ExtinguisherDetailView = ({ extinguishers }) => {
             </div>
           </div>
 
-          {/* Current Notes */}
-          {extinguisher.notes && (
+          {/* Expiration Date - Inline Editable */}
+          <div className="pt-4 border-t border-gray-700 mt-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CalendarClock size={16} className="text-gray-400" />
+                <span className="text-sm text-gray-400">Expiration Date:</span>
+              </div>
+              {editingExpiration ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={tempExpirationDate}
+                    onChange={(e) => setTempExpirationDate(e.target.value)}
+                    className="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-sm text-white"
+                    autoFocus
+                  />
+                  <button
+                    onClick={handleSaveExpirationDate}
+                    className="px-2 py-1 bg-green-600 hover:bg-green-700 rounded text-xs"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => {
+                      setEditingExpiration(false);
+                      setTempExpirationDate(extinguisher.expirationDate || '');
+                    }}
+                    className="px-2 py-1 bg-gray-600 hover:bg-gray-500 rounded text-xs"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setEditingExpiration(true)}
+                  className="flex items-center gap-2 px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm transition-colors"
+                >
+                  {extinguisher.expirationDate ? (
+                    <span>{formatExpirationDate(extinguisher.expirationDate)}</span>
+                  ) : (
+                    <span className="text-gray-400">Add Date</span>
+                  )}
+                  <Edit2 size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Current Notes (read-only if not pending) */}
+          {extinguisher.notes && !isPending && (
             <div className="mt-4 pt-4 border-t border-gray-700">
               <p className="text-sm text-gray-400 mb-1">Current Notes</p>
               <p className="text-gray-200 bg-gray-900/50 p-3 rounded">{extinguisher.notes}</p>
@@ -166,7 +383,296 @@ const ExtinguisherDetailView = ({ extinguishers }) => {
           )}
         </div>
 
-        {/* Photos Section - Optimized Loading */}
+        {/* Inspection Section - Only shown when pending */}
+        {isPending && (
+          <div className="bg-gray-800/50 backdrop-blur rounded-lg p-6 mb-4 border-2 border-yellow-500/50">
+            <h2 className="text-xl font-bold mb-4 text-yellow-400">Inspection Checklist</h2>
+
+            {/* Basic Monthly Check */}
+            <div className="mb-6">
+              <h4 className="font-semibold text-md mb-3 text-gray-300 border-b border-gray-600 pb-1">Basic Monthly Check</h4>
+              <div className="space-y-3">
+                {[
+                  { key: 'pinPresent', label: 'Pin Present' },
+                  { key: 'tamperSealIntact', label: 'Tamper Seal Intact' },
+                  { key: 'gaugeCorrectPressure', label: 'Gauge Shows Correct Pressure' },
+                  { key: 'weightCorrect', label: 'Weight feels correct' },
+                  { key: 'noDamage', label: 'No Visible Damage, Corrosion, or Leakage' },
+                ].map(({ key, label }) => (
+                  <div key={key} className="flex items-center justify-between">
+                    <span className="text-sm text-gray-200">{label}</span>
+                    <div className="flex gap-3">
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="radio"
+                          name={key}
+                          checked={checklist[key] === 'pass'}
+                          onChange={() => setChecklist(c => ({...c, [key]: 'pass'}))}
+                          className="accent-green-500"
+                        />
+                        <span className="text-xs text-green-400">Pass</span>
+                      </label>
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="radio"
+                          name={key}
+                          checked={checklist[key] === 'fail'}
+                          onChange={() => setChecklist(c => ({...c, [key]: 'fail'}))}
+                          className="accent-red-500"
+                        />
+                        <span className="text-xs text-red-400">Fail</span>
+                      </label>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Location & Accessibility */}
+            <div className="mb-6">
+              <h4 className="font-semibold text-md mb-3 text-gray-300 border-b border-gray-600 pb-1">Location & Accessibility</h4>
+              <div className="space-y-3">
+                {[
+                  { key: 'inDesignatedLocation', label: 'Extinguisher in designated location' },
+                  { key: 'clearlyVisible', label: 'Clearly Visible with no Obstructions' },
+                  { key: 'nearestUnder75ft', label: 'Nearest extinguisher not over 75ft away' },
+                ].map(({ key, label }) => (
+                  <div key={key} className="flex items-center justify-between">
+                    <span className="text-sm text-gray-200">{label}</span>
+                    <div className="flex gap-3">
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="radio"
+                          name={key}
+                          checked={checklist[key] === 'pass'}
+                          onChange={() => setChecklist(c => ({...c, [key]: 'pass'}))}
+                          className="accent-green-500"
+                        />
+                        <span className="text-xs text-green-400">Pass</span>
+                      </label>
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="radio"
+                          name={key}
+                          checked={checklist[key] === 'fail'}
+                          onChange={() => setChecklist(c => ({...c, [key]: 'fail'}))}
+                          className="accent-red-500"
+                        />
+                        <span className="text-xs text-red-400">Fail</span>
+                      </label>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Mounting & Height */}
+            <div className="mb-6">
+              <h4 className="font-semibold text-md mb-3 text-gray-300 border-b border-gray-600 pb-1">Mounting & Height</h4>
+              <div className="space-y-3">
+                {[
+                  { key: 'topUnder5ft', label: 'Top <= 5ft (if <= 40lb)' },
+                  { key: 'bottomOver4in', label: 'Bottom >= 4 inches from floor' },
+                  { key: 'mountedSecurely', label: 'Mounted securely on hanger or in Cabinet' },
+                ].map(({ key, label }) => (
+                  <div key={key} className="flex items-center justify-between">
+                    <span className="text-sm text-gray-200">{label}</span>
+                    <div className="flex gap-3">
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="radio"
+                          name={key}
+                          checked={checklist[key] === 'pass'}
+                          onChange={() => setChecklist(c => ({...c, [key]: 'pass'}))}
+                          className="accent-green-500"
+                        />
+                        <span className="text-xs text-green-400">Pass</span>
+                      </label>
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="radio"
+                          name={key}
+                          checked={checklist[key] === 'fail'}
+                          onChange={() => setChecklist(c => ({...c, [key]: 'fail'}))}
+                          className="accent-red-500"
+                        />
+                        <span className="text-xs text-red-400">Fail</span>
+                      </label>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Administrative */}
+            <div className="mb-6">
+              <h4 className="font-semibold text-md mb-3 text-gray-300 border-b border-gray-600 pb-1">Administrative</h4>
+              <div className="space-y-3">
+                {[
+                  { key: 'inspectionWithin30Days', label: 'Inspection date within 30 days of last' },
+                  { key: 'tagSignedDated', label: 'Tag signed and dated' },
+                ].map(({ key, label }) => (
+                  <div key={key} className="flex items-center justify-between">
+                    <span className="text-sm text-gray-200">{label}</span>
+                    <div className="flex gap-3">
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="radio"
+                          name={key}
+                          checked={checklist[key] === 'pass'}
+                          onChange={() => setChecklist(c => ({...c, [key]: 'pass'}))}
+                          className="accent-green-500"
+                        />
+                        <span className="text-xs text-green-400">Pass</span>
+                      </label>
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="radio"
+                          name={key}
+                          checked={checklist[key] === 'fail'}
+                          onChange={() => setChecklist(c => ({...c, [key]: 'fail'}))}
+                          className="accent-red-500"
+                        />
+                        <span className="text-xs text-red-400">Fail</span>
+                      </label>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Notes & Photos */}
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-semibold text-md text-gray-300">Notes & Photos</h4>
+                {notesSaving && (
+                  <span className="text-xs text-blue-400">Saving...</span>
+                )}
+                {notesSaved && !notesSaving && (
+                  <span className="text-xs text-green-400">Saved</span>
+                )}
+              </div>
+              <textarea
+                className="w-full border border-gray-600 rounded p-3 text-sm mb-3 bg-gray-700 text-white placeholder-gray-400"
+                rows={4}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                onBlur={async () => {
+                  if (extinguisher && notes !== (extinguisher.notes || '')) {
+                    setNotesSaving(true);
+                    setNotesSaved(false);
+                    try {
+                      const inspectionData = { checklistData: checklist, notes, photo: photoFile || null, gps: gps || null };
+                      await onSaveNotes?.(extinguisher, notes, inspectionData);
+                      setNotesSaved(true);
+                      setTimeout(() => setNotesSaved(false), 2000);
+                    } catch (error) {
+                      console.error('Auto-save on blur failed:', error);
+                    } finally {
+                      setNotesSaving(false);
+                    }
+                  }
+                }}
+                placeholder="Enter any additional notes or observations about the extinguisher or its location... (auto-saves)"
+              />
+
+              {/* Photo capture */}
+              <div className="flex items-center gap-3 mb-3">
+                <label className="px-3 py-2 border border-gray-600 rounded cursor-pointer bg-gray-700 hover:bg-gray-600 transition-colors flex items-center gap-2">
+                  <Camera size={16} />
+                  <span>Add Photo</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) {
+                        setPhotoFile(f);
+                        setPhotoPreview(URL.createObjectURL(f));
+                      }
+                    }}
+                  />
+                </label>
+                {photoPreview && (
+                  <img src={photoPreview} alt="Selected" className="h-16 w-16 object-cover rounded border border-gray-600" />
+                )}
+                {photoPreview && (
+                  <button
+                    className="text-sm text-red-400 hover:text-red-300"
+                    onClick={() => { setPhotoFile(null); setPhotoPreview(''); }}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+
+              {/* GPS capture */}
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  className="px-3 py-2 border border-gray-600 rounded bg-gray-700 hover:bg-gray-600 transition-colors flex items-center gap-2"
+                  onClick={captureGps}
+                >
+                  <MapPin size={16} />
+                  {gpsLoading ? 'Capturing…' : 'Capture GPS'}
+                </button>
+                {gps && (
+                  <div className="text-sm text-gray-300 flex flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-1 rounded bg-gray-700">
+                        {gps.lat.toFixed(6)}, {gps.lng.toFixed(6)} (±{Math.round(gps.accuracy)}m)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <a className="text-blue-400 hover:text-blue-300" href={`https://maps.google.com/?q=${gps.lat},${gps.lng}`} target="_blank" rel="noreferrer">Open in Maps</a>
+                      <button className="text-red-400 hover:text-red-300" onClick={() => setGps(null)}>Clear</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Pass/Fail Buttons */}
+            <div className="grid grid-cols-2 gap-4 pt-4 border-t border-gray-600">
+              <button
+                onClick={() => handleInspection('fail')}
+                className="bg-red-600 text-white p-4 rounded-lg hover:bg-red-700 flex items-center justify-center gap-2 font-bold text-lg shadow-lg transition"
+              >
+                <XCircle size={24} />
+                FAIL
+              </button>
+              <button
+                onClick={() => handleInspection('pass')}
+                className="bg-green-600 text-white p-4 rounded-lg hover:bg-green-700 flex items-center justify-center gap-2 font-bold text-lg shadow-lg transition"
+              >
+                <CheckCircle size={24} />
+                PASS
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Already Inspected Status Message */}
+        {!isPending && (
+          <div className={`${currentStatus.bg} rounded-lg p-4 mb-4 border ${currentStatus.color.replace('text-', 'border-')}`}>
+            <div className="flex items-center gap-3">
+              <StatusIcon size={24} className={currentStatus.color} />
+              <div>
+                <span className={`font-bold ${currentStatus.color}`}>
+                  Already {currentStatus.label}
+                </span>
+                <span className="text-gray-400 text-sm ml-2">
+                  on {formatDate(extinguisher.checkedDate)}
+                </span>
+              </div>
+            </div>
+            <p className="text-gray-400 text-sm mt-2">Reset status to re-inspect this extinguisher.</p>
+          </div>
+        )}
+
+        {/* Photos Section */}
         <div className="bg-gray-800/50 backdrop-blur rounded-lg p-6 mb-4 border border-gray-700">
           <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
             <ImageIcon size={24} />
@@ -237,7 +743,6 @@ const ExtinguisherDetailView = ({ extinguishers }) => {
 
               {showAllPhotos && (
                 <div className="mt-4 space-y-4">
-                  {/* Additional Gallery Photos */}
                   {additionalPhotos.length > 0 && (
                     <div>
                       <p className="text-sm text-gray-400 mb-2">Gallery Photos</p>
@@ -264,7 +769,6 @@ const ExtinguisherDetailView = ({ extinguishers }) => {
                     </div>
                   )}
 
-                  {/* Inspection Photos from History (excluding last inspection if already shown) */}
                   {inspectionHistory.filter(h => h.photoUrl && h.photoUrl !== lastInspectionPhoto).length > 0 && (
                     <div>
                       <p className="text-sm text-gray-400 mb-2">Previous Inspection Photos</p>
@@ -308,7 +812,7 @@ const ExtinguisherDetailView = ({ extinguishers }) => {
         </div>
 
         {/* Inspection History */}
-        <div className="bg-gray-800/50 backdrop-blur rounded-lg p-6 border border-gray-700">
+        <div className="bg-gray-800/50 backdrop-blur rounded-lg p-6 mb-4 border border-gray-700">
           <h2 className="text-xl font-bold mb-4">Inspection History ({sortedHistory.length})</h2>
 
           {sortedHistory.length === 0 ? (
@@ -337,7 +841,6 @@ const ExtinguisherDetailView = ({ extinguishers }) => {
                           <p className="text-gray-300 text-sm mb-2">{inspection.notes}</p>
                         )}
 
-                        {/* Show photo thumbnail if exists */}
                         {inspection.photoUrl && (
                           <div className="mt-2">
                             <a
@@ -358,7 +861,6 @@ const ExtinguisherDetailView = ({ extinguishers }) => {
                           </div>
                         )}
 
-                        {/* GPS from inspection */}
                         {inspection.gps && (
                           <div className="mt-2 text-xs text-gray-400">
                             <a
@@ -373,7 +875,6 @@ const ExtinguisherDetailView = ({ extinguishers }) => {
                           </div>
                         )}
 
-                        {/* Checklist Data - Expandable */}
                         {inspection.checklistData && (
                           <div className="mt-2">
                             <button
@@ -391,8 +892,8 @@ const ExtinguisherDetailView = ({ extinguishers }) => {
                                     <span className="text-gray-300">
                                       {key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}:
                                     </span>
-                                    <span className={value ? 'text-green-400' : 'text-red-400'}>
-                                      {value ? '✓ Pass' : '✗ Fail'}
+                                    <span className={value === 'pass' ? 'text-green-400' : 'text-red-400'}>
+                                      {value === 'pass' ? '✓ Pass' : '✗ Fail'}
                                     </span>
                                   </div>
                                 ))}
@@ -411,7 +912,7 @@ const ExtinguisherDetailView = ({ extinguishers }) => {
 
         {/* Replacement History */}
         {extinguisher.replacementHistory && extinguisher.replacementHistory.length > 0 && (
-          <div className="bg-gray-800/50 backdrop-blur rounded-lg p-6 border border-gray-700">
+          <div className="bg-gray-800/50 backdrop-blur rounded-lg p-6 mb-4 border border-gray-700">
             <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
               <RotateCcw size={24} />
               Replacement History ({extinguisher.replacementHistory.length})
@@ -489,6 +990,32 @@ const ExtinguisherDetailView = ({ extinguishers }) => {
             </div>
           </div>
         )}
+
+        {/* Action Buttons - Fixed at bottom */}
+        <div className="fixed bottom-0 left-0 right-0 bg-gray-900/95 backdrop-blur border-t border-gray-700 p-4">
+          <div className="max-w-4xl mx-auto flex gap-3">
+            <button
+              onClick={handleCancel}
+              className="flex-1 bg-gray-600 text-white p-3 rounded-lg hover:bg-gray-500 font-semibold transition"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleEditClick}
+              className="flex-1 bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 font-semibold transition"
+            >
+              <Edit2 size={20} />
+              Edit
+            </button>
+            <button
+              onClick={handleReplaceClick}
+              className="flex-1 bg-orange-600 text-white p-3 rounded-lg hover:bg-orange-700 flex items-center justify-center gap-2 font-semibold transition"
+            >
+              <RotateCcw size={20} />
+              Replace
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

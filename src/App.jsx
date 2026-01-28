@@ -66,7 +66,8 @@ function App() {
     vicinity: '',
     parentLocation: '',
     section: 'Main Hospital',
-    category: 'standard'
+    category: 'standard',
+    expirationDate: ''
   });
   const [newItemPhoto, setNewItemPhoto] = useState(null);
   const [newItemGps, setNewItemGps] = useState(null);
@@ -852,46 +853,6 @@ function App() {
     }
   }, [scanMode]);
 
-  // Keep the modal notes field in sync with the selected item
-  useEffect(() => {
-    setSelectedItemNotes(selectedItem?.notes || '');
-    setNotesSaved(false);
-  }, [selectedItem]);
-
-  // Auto-save notes with debouncing
-  useEffect(() => {
-    if (!selectedItem || !selectedItemNotes) return;
-    
-    // Clear existing timeout
-    if (notesSaveTimeoutRef.current) {
-      clearTimeout(notesSaveTimeoutRef.current);
-    }
-
-    // Set new timeout for debounced save
-    notesSaveTimeoutRef.current = setTimeout(async () => {
-      if (selectedItem && selectedItemNotes !== (selectedItem.notes || '')) {
-        setNotesSaving(true);
-        setNotesSaved(false);
-        try {
-          await handleSaveNotes(selectedItem, selectedItemNotes);
-          setNotesSaved(true);
-          setTimeout(() => setNotesSaved(false), 2000); // Hide "Saved" message after 2s
-        } catch (error) {
-          console.error('Auto-save failed:', error);
-        } finally {
-          setNotesSaving(false);
-        }
-      }
-    }, 2000); // 2 second debounce
-
-    // Cleanup on unmount or when selectedItem changes
-    return () => {
-      if (notesSaveTimeoutRef.current) {
-        clearTimeout(notesSaveTimeoutRef.current);
-      }
-    };
-  }, [selectedItemNotes, selectedItem]);
-
   const saveData = async (newData) => {
     // Firestore handles the state updates through onSnapshot
     // This function is now mainly for compatibility
@@ -1551,6 +1512,7 @@ function App() {
         parentLocation: newItem.parentLocation.trim(),
         section: newItem.section,
         category: newItem.category || 'standard',
+        expirationDate: newItem.expirationDate || null,
         status: 'pending',
         checkedDate: null,
         notes: '',
@@ -1570,7 +1532,8 @@ function App() {
         vicinity: '',
         parentLocation: '',
         section: 'Main Hospital',
-        category: 'standard'
+        category: 'standard',
+        expirationDate: ''
       });
       setNewItemPhoto(null);
       setNewItemGps(null);
@@ -1680,10 +1643,11 @@ function App() {
     console.log('Search result:', found);
 
     if (found) {
-      setSelectedItem(found);
       setScanInput('');
       setScanMode(false);
-      alert('Found! Opening fire extinguisher details.');
+      navigate(`/app/extinguisher/${found.assetId}`, {
+        state: { from: 'scanner', returnPath: '/app' }
+      });
     } else {
       // Show what we actually have for debugging
       const allAssetIds = extinguishers.map(item => item.assetId).slice(0, 5);
@@ -1722,8 +1686,9 @@ function App() {
     setShowCameraScanner(false);
 
     if (found) {
-      setSelectedItem(found);
-      alert('Found! Opening fire extinguisher details.');
+      navigate(`/app/extinguisher/${found.assetId}`, {
+        state: { from: 'scanner', returnPath: '/app' }
+      });
     } else {
       const allAssetIds = extinguishers.map(item => item.assetId).slice(0, 5);
       alert(`NOT FOUND: "${searchValue}"\n\nTotal extinguishers: ${extinguishers.length}\n\nFirst few Asset IDs:\n${allAssetIds.join(', ')}`);
@@ -1746,6 +1711,7 @@ function App() {
         parentLocation: editItem.parentLocation,
         section: editItem.section,
         category: editItem.category || 'standard',
+        expirationDate: editItem.expirationDate || null,
         location: editItem.location || null
       }, { merge: true });
 
@@ -2339,6 +2305,16 @@ function App() {
       notes: ''
     });
   };
+  const handleUpdateExpirationDate = async (item, expirationDate) => {
+    try {
+      const docRef = doc(db, 'extinguishers', item.id);
+      await setDoc(docRef, { expirationDate: expirationDate || null }, { merge: true });
+    } catch (error) {
+      console.error('Error updating expiration date:', error);
+      alert('Error saving expiration date. Please try again.');
+    }
+  };
+
   const handleSaveNotes = async (item, notesSummary, inspectionData = null) => {
     try {
       let photoUrl = null;
@@ -3411,21 +3387,26 @@ function App() {
               element={
                 <SectionDetail
                   extinguishers={extinguishers}
-                  onSelectItem={setSelectedItem}
                   getViewMode={getSectionViewMode}
                   toggleView={toggleSectionView}
                   countsFor={countsForSection}
-                  onPass={handlePass}
-                  onFail={handleFail}
                   onEdit={handleEdit}
-                  onSaveNotes={handleSaveNotes}
-                  onReplace={handleOpenReplace}
                 />
               }
             />
             <Route
               path="extinguisher/:assetId"
-              element={<ExtinguisherDetailView extinguishers={extinguishers} />}
+              element={
+                <ExtinguisherDetailView
+                  extinguishers={extinguishers}
+                  onPass={handlePass}
+                  onFail={handleFail}
+                  onEdit={handleEdit}
+                  onReplace={handleOpenReplace}
+                  onSaveNotes={handleSaveNotes}
+                  onUpdateExpirationDate={handleUpdateExpirationDate}
+                />
+              }
             />
             <Route
               path="calculator"
@@ -3739,6 +3720,17 @@ function App() {
               </div>
 
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Expiration Date</label>
+                <input
+                  type="date"
+                  value={newItem.expirationDate}
+                  onChange={(e) => setNewItem({...newItem, expirationDate: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                />
+                <p className="text-xs text-gray-500 mt-1">Date when extinguisher expires or needs service</p>
+              </div>
+
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Photo (optional)</label>
                 <input type="file" accept="image/*" capture="environment" onChange={(e)=> setNewItemPhoto(e.target.files?.[0] || null)} />
               </div>
@@ -3843,295 +3835,7 @@ function App() {
         onClose={() => setShowCameraScanner(false)}
       />
 
-      {selectedItem && !editItem && (
-        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-lg p-6 max-w-2xl w-full my-8 border-2 border-red-600 shadow-2xl">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-2xl font-bold text-red-400">Inspect Fire Extinguisher</h3>
-              <button
-                onClick={() => setSelectedItem(null)}
-                className="text-gray-400 hover:text-white transition"
-              >
-                <X size={24} />
-              </button>
-            </div>
-
-            {/* View Full Details Button */}
-            <button
-              onClick={() => {
-                navigate(`/app/extinguisher/${selectedItem.assetId}`);
-                setSelectedItem(null);
-              }}
-              className="w-full mb-4 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-lg transition-colors font-semibold"
-            >
-              <FileText size={20} />
-              View Full Details & Photos
-            </button>
-
-            <div className="space-y-4 mb-6">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <div className="text-sm text-gray-400">Asset ID</div>
-                  <div className="font-semibold text-xl text-white">{selectedItem.assetId}</div>
-                </div>
-                <div>
-                  <div className="text-sm text-gray-400">Serial Number</div>
-                  <div className="font-mono text-white">{selectedItem.serial}</div>
-                </div>
-              </div>
-
-              <div>
-                <div className="text-sm text-gray-400">Location</div>
-                <div className="font-medium text-white">{selectedItem.vicinity}</div>
-                <div className="text-sm text-gray-300">{selectedItem.parentLocation}</div>
-              </div>
-
-              <div>
-                <div className="text-sm text-gray-400">Section</div>
-                <div className="font-medium text-white">{selectedItem.section}</div>
-              </div>
-
-              {/* Manufacture Year / Maintenance Date */}
-              <div>
-                <div className="text-sm text-gray-400 mb-1">Mfg Year / 6-Year / Hydro Test</div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={selectedItem.manufactureYear || ''}
-                    onChange={async (e) => {
-                      const newValue = e.target.value;
-                      // Update local state immediately for responsive UI
-                      setSelectedItem({ ...selectedItem, manufactureYear: newValue });
-                    }}
-                    onBlur={async (e) => {
-                      // Save to database on blur
-                      const newValue = e.target.value.trim();
-                      try {
-                        const docRef = doc(db, 'extinguishers', selectedItem.id);
-                        await setDoc(docRef, { manufactureYear: newValue }, { merge: true });
-                      } catch (err) {
-                        console.error('Error saving manufacture year:', err);
-                        alert('Error saving year. Please try again.');
-                      }
-                    }}
-                    placeholder="e.g., 2019 / 6yr: 2025 / Hydro: 2025"
-                    className="flex-1 p-2 border border-gray-600 rounded-lg bg-gray-700 text-white placeholder-gray-500 focus:ring-2 focus:ring-red-500 focus:border-red-500 text-sm"
-                  />
-                </div>
-                <div className="text-xs text-gray-500 mt-1">Enter manufacture year, 6-year maintenance, or hydrostatic test dates</div>
-              </div>
-
-              {/* Location chip with Open in Maps */}
-              {(() => {
-                const gps = selectedItem.lastInspectionGps || selectedItem.location;
-                if (!gps) return null;
-                return (
-                  <div>
-                    <div className="text-sm text-gray-400 mb-1">GPS Location</div>
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-white bg-black/40 px-2 py-1 rounded">
-                          {Number(gps.lat).toFixed(6)}, {Number(gps.lng).toFixed(6)}
-                          {gps.accuracy ? (<span className="text-gray-300"> (±{Math.round(gps.accuracy)}m)</span>) : null}
-                        </span>
-                        {gps.altitude !== null && gps.altitude !== undefined && (
-                          <span className="text-sm text-white bg-blue-600/60 px-2 py-1 rounded">
-                            Alt: {Math.round(gps.altitude)}m {gps.altitudeAccuracy ? `(±${Math.round(gps.altitudeAccuracy)}m)` : ''}
-                          </span>
-                        )}
-                      </div>
-                      <a
-                        className="text-blue-300 underline text-sm"
-                        href={`https://maps.google.com/?q=${gps.lat},${gps.lng}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >Open in Maps</a>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Photos section */}
-              <div>
-                <div className="text-sm text-gray-400 mb-2">Photos</div>
-                <div className="flex flex-wrap gap-3 items-center">
-                  {(selectedItem.photos && selectedItem.photos.length > 0) ? (
-                    selectedItem.photos.map((p, i) => (
-                      <div key={i} className="relative group">
-                        <a href={p.url} target="_blank" rel="noreferrer">
-                          <img src={p.url} alt={`Asset photo ${i+1}`} className="w-20 h-20 object-cover rounded border" />
-                        </a>
-                        <div className="absolute -top-2 -right-2 hidden group-hover:flex gap-1">
-                          {i !== 0 && (
-                            <button className="text-xs bg-yellow-400 text-black px-1 rounded" onClick={(e)=>{ e.preventDefault(); setMainAssetPhoto(selectedItem, i); }}>Main</button>
-                          )}
-                          <button className="text-xs bg-red-600 text-white px-1 rounded" onClick={(e)=>{ e.preventDefault(); removeAssetPhoto(selectedItem, i); }}>X</button>
-                        </div>
-                        {i === 0 && (
-                          <div className="absolute bottom-0 left-0 bg-black/60 text-white text-[10px] px-1 rounded-tr">Main</div>
-                        )}
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-sm text-gray-300">No photos</div>
-                  )}
-                  <label className={`px-3 py-2 rounded bg-gray-700 text-white cursor-pointer ${selectedItem.photos && selectedItem.photos.length >= 5 ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                    Add Photo
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      className="hidden"
-                      disabled={!!(selectedItem.photos && selectedItem.photos.length >= 5)}
-                      onChange={async (e)=>{
-                        const f = e.target.files?.[0];
-                        e.target.value = null;
-                        if (f) { await addAssetPhoto(selectedItem, f); }
-                      }}
-                    />
-                  </label>
-                  {selectedItem.photos && selectedItem.photos.length >= 5 && (
-                    <span className="text-xs text-gray-400">Limit reached (5 photos)</span>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <div className="text-sm text-gray-400 mb-2">Current Status</div>
-                <div className="flex items-center gap-2">
-                  {selectedItem.status === 'pass' && (
-                    <span className="px-3 py-1 bg-green-600 text-white rounded-full font-semibold">PASSED</span>
-                  )}
-                  {selectedItem.status === 'fail' && (
-                    <span className="px-3 py-1 bg-red-600 text-white rounded-full font-semibold">FAILED</span>
-                  )}
-                  {selectedItem.status === 'pending' && (
-                    <span className="px-3 py-1 bg-gray-600 text-white rounded-full font-semibold">PENDING</span>
-                  )}
-                  {selectedItem.status !== 'pending' && (
-                    <button
-                      onClick={() => resetStatus(selectedItem)}
-                      className="text-sm text-red-400 hover:text-red-300 underline"
-                    >
-                      Reset Status
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {selectedItem.inspectionHistory && selectedItem.inspectionHistory.length > 0 && (
-                <div>
-                  <div className="text-sm text-gray-400 mb-2">Inspection History</div>
-                  <div className="space-y-2 max-h-40 overflow-y-auto">
-                    {selectedItem.inspectionHistory.map((hist, idx) => (
-                      <div key={idx} className="text-sm bg-gray-700 p-2 rounded border border-gray-600">
-                        <div className="flex justify-between">
-                          <span className={hist.status === 'pass' ? 'text-green-400 font-semibold' : 'text-red-400 font-semibold'}>
-                            {hist.status.toUpperCase()}
-                          </span>
-                          <span className="text-gray-300">
-                            {new Date(hist.date).toLocaleString()}
-                          </span>
-                        </div>
-                        {hist.notes && <div className="text-gray-300 mt-1">{hist.notes}</div>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Notes always visible */}
-            <div className="space-y-4">
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="block text-sm font-medium text-gray-300">
-                    Notes
-                  </label>
-                  {notesSaving && (
-                    <span className="text-xs text-blue-400">Saving...</span>
-                  )}
-                  {notesSaved && !notesSaving && (
-                    <span className="text-xs text-green-400">Saved</span>
-                  )}
-                </div>
-                <textarea
-                  rows="3"
-                  value={selectedItemNotes}
-                  onChange={(e) => setSelectedItemNotes(e.target.value)}
-                  onBlur={async () => {
-                    // Save immediately on blur
-                    if (selectedItem && selectedItemNotes !== (selectedItem.notes || '')) {
-                      setNotesSaving(true);
-                      setNotesSaved(false);
-                      try {
-                        await handleSaveNotes(selectedItem, selectedItemNotes);
-                        setNotesSaved(true);
-                        setTimeout(() => setNotesSaved(false), 2000);
-                      } catch (error) {
-                        console.error('Auto-save on blur failed:', error);
-                      } finally {
-                        setNotesSaving(false);
-                      }
-                    }
-                  }}
-                  className="w-full p-3 border border-gray-600 rounded-lg bg-gray-700 text-white placeholder-gray-400 focus:ring-2 focus:ring-red-500 focus:border-red-500"
-                  placeholder="Add any notes about this extinguisher... (auto-saves)"
-                />
-              </div>
-
-              {selectedItem.status === 'pending' && (
-                <div className="grid grid-cols-2 gap-4">
-                  <button
-                    onClick={() => {
-                      handleInspection(selectedItem, 'pass', selectedItemNotes);
-                    }}
-                    className="bg-green-600 text-white p-4 rounded-lg hover:bg-green-700 flex items-center justify-center gap-2 font-bold text-lg shadow-lg transition"
-                  >
-                    <CheckCircle size={24} />
-                    PASS
-                  </button>
-                  <button
-                    onClick={() => {
-                      handleInspection(selectedItem, 'fail', selectedItemNotes);
-                    }}
-                    className="bg-red-600 text-white p-4 rounded-lg hover:bg-red-700 flex items-center justify-center gap-2 font-bold text-lg shadow-lg transition"
-                  >
-                    <XCircle size={24} />
-                    FAIL
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div className="mt-4 pt-4 border-t border-gray-700 space-y-2">
-              <button
-                onClick={() => handleEdit(selectedItem)}
-                className="w-full bg-blue-600 text-white p-3 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2 font-semibold transition shadow-lg"
-              >
-                <Edit2 size={20} />
-                Edit Extinguisher Details
-              </button>
-              <button
-                onClick={() => {
-                  setReplaceItem(selectedItem);
-                  setReplaceForm({
-                    assetId: selectedItem.assetId || '',
-                    serial: '',
-                    reason: '',
-                    manufactureDate: '',
-                    notes: ''
-                  });
-                }}
-                className="w-full bg-orange-600 text-white p-3 rounded-lg hover:bg-orange-700 flex items-center justify-center gap-2 font-semibold transition shadow-lg"
-              >
-                <RotateCcw size={20} />
-                Replace Extinguisher
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* selectedItem modal removed - now using unified ExtinguisherDetailView */}
 
       {editItem && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
@@ -4208,6 +3912,17 @@ function App() {
                   <option value="spare">Spare</option>
                   <option value="replaced">Replaced</option>
                 </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Expiration Date</label>
+                <input
+                  type="date"
+                  value={editItem.expirationDate || ''}
+                  onChange={(e) => setEditItem({...editItem, expirationDate: e.target.value})}
+                  className="w-full p-2 border border-gray-300 rounded-lg"
+                />
+                <p className="text-xs text-gray-500 mt-1">Date when extinguisher expires or needs service</p>
               </div>
 
               {/* GPS for edit */}
