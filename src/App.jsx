@@ -3,7 +3,7 @@ import { Routes, Route, useNavigate, Link, useLocation } from 'react-router-dom'
 import ExcelJS from 'exceljs';
 import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History, ClipboardList } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce, writeBatch } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce, writeBatch, getDoc, deleteField } from 'firebase/firestore';
 import { auth, db, storage, workspacesRef } from './firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { deleteObject } from 'firebase/storage';
@@ -87,12 +87,71 @@ const SECTIONS = [
   const [currentSectionNote, setCurrentSectionNote] = useState('');
   const [noteSelectedSection, setNoteSelectedSection] = useState('Main Hospital');
   const [saveNoteForNextMonth, setSaveNoteForNextMonth] = useState(false);
+  // Share settings state (owner only)
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareLoading, setShareLoading] = useState(false);
+  const [sharePublic, setSharePublic] = useState(false);
+  const [shareExpiry, setShareExpiry] = useState(''); // YYYY-MM-DDTHH:mm
 
   // Viewer mode (read-only) via query param ?owner=<ownerUid>
   const qs = new URLSearchParams(location.search);
   const ownerOverride = (qs.get('owner') || '').trim() || null;
   const dataOwnerId = ownerOverride || (user?.uid || null);
   const readOnly = !!ownerOverride && ownerOverride !== (user?.uid || null);
+
+  // Load share settings when opening modal (owner only)
+  const openShareSettings = async () => {
+    if (!user || readOnly) return;
+    setShowShareModal(true);
+    setShareLoading(true);
+    try {
+      const ref = doc(db, 'shares', user.uid);
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        const d = snap.data() || {};
+        setSharePublic(!!d.publicRead);
+        if (d.expiresAt && d.expiresAt.toDate) {
+          const iso = d.expiresAt.toDate().toISOString();
+          setShareExpiry(iso.slice(0,16));
+        } else if (d.expiresAt instanceof Date) {
+          const iso = d.expiresAt.toISOString();
+          setShareExpiry(iso.slice(0,16));
+        } else {
+          setShareExpiry('');
+        }
+      } else {
+        setSharePublic(false);
+        setShareExpiry('');
+      }
+    } catch (e) {
+      console.error('Failed to load share settings', e);
+      alert('Failed to load share settings.');
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  const saveShareSettings = async () => {
+    if (!user || readOnly) return;
+    setShareLoading(true);
+    try {
+      const ref = doc(db, 'shares', user.uid);
+      const payload = { publicRead: !!sharePublic };
+      if (shareExpiry && !isNaN(new Date(shareExpiry).getTime())) {
+        payload.expiresAt = new Date(shareExpiry);
+      } else {
+        payload.expiresAt = deleteField();
+      }
+      await setDoc(ref, payload, { merge: true });
+      alert('Share settings saved.');
+      setShowShareModal(false);
+    } catch (e) {
+      console.error('Failed to save share settings', e);
+      alert('Failed to save share settings.');
+    } finally {
+      setShareLoading(false);
+    }
+  };
 
   // Export options state
   const [showExportModal, setShowExportModal] = useState(false);
@@ -2957,22 +3016,15 @@ const SECTIONS = [
 
               {/* Share read-only link (owner only) */}
               {!readOnly && (
-                <button
-                  onClick={async () => {
-                    try {
-                      const base = window.location.origin + (import.meta.env.BASE_URL || '');
-                      const link = `${base}app?owner=${encodeURIComponent(user.uid)}`;
-                      await navigator.clipboard.writeText(link);
-                      alert('Read-only share link copied to clipboard!');
-                    } catch (e) {
-                      alert('Failed to copy link. You can share your UID instead.');
-                    }
-                  }}
-                  className="flex items-center gap-2 px-4 py-2 bg-yellow-500 text-yellow-900 rounded hover:bg-yellow-400 transition w-full mt-2"
-                >
-                  <Shield size={20} />
-                  Copy Read-Only Share Link
-                </button>
+                <>
+                  <button
+                    onClick={openShareSettings}
+                    className="flex items-center gap-2 px-4 py-2 bg-yellow-500 text-yellow-900 rounded hover:bg-yellow-400 transition w-full mt-2"
+                  >
+                    <Shield size={20} />
+                    Share Settings (Read-Only)
+                  </button>
+                </>
               )}
 
               {adminMode && !readOnly && (
@@ -4484,6 +4536,86 @@ const SECTIONS = [
               <div className="text-xs text-gray-500 mt-2">
                 Export will include: Basic info + your selected options above
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Share Settings Modal */}
+      {showShareModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-lg p-6 max-w-xl w-full my-8">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">Share Settings (Read-Only)</h3>
+              <button onClick={() => setShowShareModal(false)}>
+                <X size={24} />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <input
+                  id="sharePublic"
+                  type="checkbox"
+                  className="w-4 h-4"
+                  checked={sharePublic}
+                  onChange={(e) => setSharePublic(e.target.checked)}
+                />
+                <label htmlFor="sharePublic" className="font-medium">Enable read-only public access (with share link)</label>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Expiration (optional)</label>
+                <input
+                  type="datetime-local"
+                  value={shareExpiry}
+                  onChange={(e) => setShareExpiry(e.target.value)}
+                  className="border rounded px-3 py-2 w-full"
+                />
+                <p className="text-xs text-gray-500 mt-1">After this time, guest access will automatically end. Leave blank for no expiration.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Share Link</label>
+                <div className="flex gap-2">
+                  <input
+                    readOnly
+                    value={`${window.location.origin}${import.meta.env.BASE_URL || ''}app?owner=${user?.uid || ''}`}
+                    className="flex-1 border rounded px-3 py-2 text-sm"
+                  />
+                  <button
+                    onClick={async () => {
+                      try {
+                        const base = window.location.origin + (import.meta.env.BASE_URL || '');
+                        const link = `${base}app?owner=${encodeURIComponent(user.uid)}`;
+                        await navigator.clipboard.writeText(link);
+                        alert('Share link copied!');
+                      } catch {
+                        alert('Failed to copy share link.');
+                      }
+                    }}
+                    className="px-3 py-2 rounded bg-gray-800 text-white text-sm"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">Guests can also enter your Share Code below on the login screen.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Share Code (Owner UID)</label>
+                <div className="flex gap-2">
+                  <input readOnly value={user?.uid || ''} className="flex-1 border rounded px-3 py-2 text-sm" />
+                  <button
+                    onClick={async () => {
+                      try { await navigator.clipboard.writeText(user.uid); alert('Share code copied!'); } catch {}
+                    }}
+                    className="px-3 py-2 rounded bg-gray-800 text-white text-sm"
+                  >Copy</button>
+                </div>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button onClick={() => setShowShareModal(false)} className="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300">Cancel</button>
+              <button onClick={saveShareSettings} disabled={shareLoading} className="px-4 py-2 rounded bg-yellow-500 text-yellow-900 hover:bg-yellow-400 disabled:opacity-50">
+                {shareLoading ? 'Saving…' : 'Save Settings'}
+              </button>
             </div>
           </div>
         </div>
