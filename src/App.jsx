@@ -13,6 +13,7 @@ import SectionGrid from './components/SectionGrid';
 import SectionDetail from './components/SectionDetail';
 import ExtinguisherDetailView from './components/ExtinguisherDetailView';
 import Calculator from './components/Calculator.jsx';
+import PrintableExtinguisherList from './components/PrintableExtinguisherList.jsx';
 import CustomAssetChecker from './components/CustomAssetChecker.jsx';
 
 const SECTIONS = [
@@ -3048,6 +3049,16 @@ function App() {
               </div>
               <button
                 onClick={() => {
+                  navigate('/app/print');
+                  setShowMenu(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-800 transition w-full"
+              >
+                <FileText size={20} />
+                Print Full List
+              </button>
+              <button
+                onClick={() => {
                   setExportOptions({ ...exportOptions, type: 'all' });
                   setShowExportModal(true);
                   setShowMenu(false);
@@ -3411,6 +3422,14 @@ function App() {
             <Route
               path="calculator"
               element={<Calculator />}
+            />
+            <Route
+              path="print"
+              element={
+                <PrintableExtinguisherList
+                  extinguishers={extinguishers}
+                />
+              }
             />
             <Route
               path="custom-assets"
