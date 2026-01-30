@@ -1,14 +1,18 @@
 import React, { useState } from 'react';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInAnonymously } from 'firebase/auth';
 import { auth } from './firebase';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Lock, User, AlertCircle } from 'lucide-react';
 
 function Login() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [ownerCode, setOwnerCode] = useState(new URLSearchParams(location.search).get('owner') || '');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -99,6 +103,43 @@ function Login() {
             >
               {isSignUp ? 'Already have an account? Sign in' : 'Need an account? Sign up'}
             </button>
+          </div>
+
+          {/* Guest Access */}
+          <div className="mt-8">
+            <div className="border-t pt-6">
+              <h3 className="text-sm font-semibold text-gray-800 mb-2">Guest Access (Read-Only)</h3>
+              <p className="text-xs text-gray-600 mb-3">Enter the share code provided by the owner to view their data without a password.</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="Share code (Owner UID)"
+                  value={ownerCode}
+                  onChange={(e) => setOwnerCode(e.target.value)}
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                />
+                <button
+                  onClick={async () => {
+                    try {
+                      setError('');
+                      setLoading(true);
+                      await signInAnonymously(auth);
+                      const owner = (ownerCode || '').trim();
+                      navigate(owner ? `/app?owner=${encodeURIComponent(owner)}` : '/app');
+                    } catch (err) {
+                      setError(err?.message || 'Guest sign-in failed');
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                  className="px-3 py-2 rounded bg-gray-800 text-white text-sm hover:bg-black disabled:opacity-50"
+                  disabled={loading}
+                >
+                  Continue as Guest
+                </button>
+              </div>
+              <p className="mt-2 text-[11px] text-gray-500">No password required. Access is read-only and may be time-limited.</p>
+            </div>
           </div>
 
           <div className="mt-8 text-center text-xs text-gray-500">

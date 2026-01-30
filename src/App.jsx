@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Routes, Route, useNavigate, Link } from 'react-router-dom';
+import { Routes, Route, useNavigate, Link, useLocation } from 'react-router-dom';
 import ExcelJS from 'exceljs';
 import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History, ClipboardList } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
@@ -28,8 +28,9 @@ const SECTIONS = [
   'FED'
 ];
 
-function App() {
+  function App() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [extinguishers, setExtinguishers] = useState([]);
@@ -86,6 +87,12 @@ function App() {
   const [currentSectionNote, setCurrentSectionNote] = useState('');
   const [noteSelectedSection, setNoteSelectedSection] = useState('Main Hospital');
   const [saveNoteForNextMonth, setSaveNoteForNextMonth] = useState(false);
+
+  // Viewer mode (read-only) via query param ?owner=<ownerUid>
+  const qs = new URLSearchParams(location.search);
+  const ownerOverride = (qs.get('owner') || '').trim() || null;
+  const dataOwnerId = ownerOverride || (user?.uid || null);
+  const readOnly = !!ownerOverride && ownerOverride !== (user?.uid || null);
 
   // Export options state
   const [showExportModal, setShowExportModal] = useState(false);
@@ -274,20 +281,16 @@ function App() {
 
   // Load workspaces and handle migration
   useEffect(() => {
-    if (!user) {
+    if (!dataOwnerId) {
       setWorkspaces([]);
       setCurrentWorkspaceId(null);
       return;
     }
 
-    console.log('=== FIREBASE DEBUG ===');
-    console.log('User UID:', user.uid);
-    console.log('User Email:', user.email);
-
-    // Load workspaces from Firestore
+    // Load workspaces for data owner
     const workspacesQuery = query(
       collection(db, 'workspaces'),
-      where('userId', '==', user.uid),
+      where('userId', '==', dataOwnerId),
       where('status', '==', 'active')
     );
 
@@ -300,60 +303,61 @@ function App() {
       console.log('Workspace data:', JSON.stringify(workspaceData, null, 2));
       setWorkspaces(workspaceData);
 
-      // If no workspaces exist, we need to migrate existing data
+      // For read-only guest mode, do not create/migrate; just pick a workspace to view
       if (workspaceData.length === 0) {
-        // Check if there are extinguishers without workspaceId (legacy data)
-        const legacyQuery = query(
-          collection(db, 'extinguishers'),
-          where('userId', '==', user.uid)
-        );
-        const legacySnap = await getDocs(legacyQuery);
+        if (readOnly) {
+          setCurrentWorkspaceId(null);
+        } else {
+          // Owner-only: if no workspaces exist, perform migration
+          const legacyQuery = query(
+            collection(db, 'extinguishers'),
+            where('userId', '==', dataOwnerId)
+          );
+          const legacySnap = await getDocs(legacyQuery);
 
-        if (legacySnap.docs.length > 0) {
-          // Create initial workspace for current month
-          const now = new Date();
-          const monthLabel = now.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }).replace(' ', " '");
-          const monthYear = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+          if (legacySnap.docs.length > 0) {
+            const now = new Date();
+            const monthLabel = now.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }).replace(' ', " '");
+            const monthYear = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-          const newWorkspace = {
-            userId: user.uid,
-            label: monthLabel,
-            monthYear: monthYear,
-            status: 'active',
-            createdAt: now.toISOString(),
-            archivedAt: null
-          };
+            const newWorkspace = {
+              userId: dataOwnerId,
+              label: monthLabel,
+              monthYear: monthYear,
+              status: 'active',
+              createdAt: now.toISOString(),
+              archivedAt: null
+            };
 
-          const wsDoc = await addDoc(collection(db, 'workspaces'), newWorkspace);
+            const wsDoc = await addDoc(collection(db, 'workspaces'), newWorkspace);
 
-          // Migrate existing extinguishers to this workspace
-          const batch = writeBatch(db);
-          legacySnap.docs.forEach(docSnapshot => {
-            if (!docSnapshot.data().workspaceId) {
-              batch.update(doc(db, 'extinguishers', docSnapshot.id), {
-                workspaceId: wsDoc.id
-              });
-            }
-          });
-          await batch.commit();
+            const batch = writeBatch(db);
+            legacySnap.docs.forEach(docSnapshot => {
+              if (!docSnapshot.data().workspaceId) {
+                batch.update(doc(db, 'extinguishers', docSnapshot.id), {
+                  workspaceId: wsDoc.id
+                });
+              }
+            });
+            await batch.commit();
 
-          setCurrentWorkspaceId(wsDoc.id);
-          localStorage.setItem(`currentWorkspace_${user.uid}`, wsDoc.id);
+            setCurrentWorkspaceId(wsDoc.id);
+            localStorage.setItem(`currentWorkspace_${dataOwnerId}`, wsDoc.id);
+          }
         }
       } else {
-        // Restore saved workspace or use first active one
-        const savedWorkspaceId = localStorage.getItem(`currentWorkspace_${user.uid}`);
+        // Restore saved workspace or use most recent one
+        const savedWorkspaceId = localStorage.getItem(`currentWorkspace_${dataOwnerId}`);
         const validWorkspace = workspaceData.find(ws => ws.id === savedWorkspaceId);
 
         if (validWorkspace) {
           setCurrentWorkspaceId(savedWorkspaceId);
         } else {
-          // Use most recent workspace
           const sorted = workspaceData.sort((a, b) =>
             new Date(b.createdAt) - new Date(a.createdAt)
           );
           setCurrentWorkspaceId(sorted[0].id);
-          localStorage.setItem(`currentWorkspace_${user.uid}`, sorted[0].id);
+          localStorage.setItem(`currentWorkspace_${dataOwnerId}`, sorted[0].id);
         }
       }
     }, (error) => {
@@ -362,19 +366,19 @@ function App() {
     });
 
     return () => unsubscribeWorkspaces();
-  }, [user]);
+  }, [dataOwnerId, readOnly]);
 
   // Load extinguishers - show ALL extinguishers regardless of workspaceId
   useEffect(() => {
-    if (!user) {
+    if (!dataOwnerId) {
       setExtinguishers([]);
       return;
     }
 
-    // Load ALL extinguishers for user - no workspace filtering
+    // Load ALL extinguishers for the data owner - no workspace filtering
     const extinguishersQuery = query(
       collection(db, 'extinguishers'),
-      where('userId', '==', user.uid)
+      where('userId', '==', dataOwnerId)
     );
 
     const normalizeStatus = (s) => String(s || '').toLowerCase();
@@ -426,7 +430,7 @@ function App() {
     });
 
     // Load section times from localStorage scoped to workspace
-    const savedTimes = localStorage.getItem(`sectionTimes_${user.uid}_${currentWorkspaceId}`);
+    const savedTimes = localStorage.getItem(`sectionTimes_${dataOwnerId}_${currentWorkspaceId}`);
     if (savedTimes) {
       setSectionTimes(JSON.parse(savedTimes));
     } else {
@@ -436,18 +440,18 @@ function App() {
     return () => {
       unsubscribeExtinguishers();
     };
-  }, [user, currentWorkspaceId]);
+  }, [dataOwnerId, currentWorkspaceId]);
 
   // Load section notes (global, not workspace-scoped)
   useEffect(() => {
-    if (!user) {
+    if (!dataOwnerId) {
       setSectionNotes({});
       return;
     }
 
     const sectionNotesQuery = query(
       collection(db, 'sectionNotes'),
-      where('userId', '==', user.uid)
+      where('userId', '==', dataOwnerId)
     );
 
     const unsubscribeSectionNotes = onSnapshot(sectionNotesQuery, (snapshot) => {
@@ -467,13 +471,13 @@ function App() {
     });
 
     return () => unsubscribeSectionNotes();
-  }, [user]);
+  }, [dataOwnerId]);
 
   useEffect(() => {
-    if (user && currentWorkspaceId && Object.keys(sectionTimes).length > 0) {
-      localStorage.setItem(`sectionTimes_${user.uid}_${currentWorkspaceId}`, JSON.stringify(sectionTimes));
+    if (dataOwnerId && currentWorkspaceId && Object.keys(sectionTimes).length > 0) {
+      localStorage.setItem(`sectionTimes_${dataOwnerId}_${currentWorkspaceId}`, JSON.stringify(sectionTimes));
     }
-  }, [sectionTimes, user, currentWorkspaceId]);
+  }, [sectionTimes, dataOwnerId, currentWorkspaceId]);
 
   useEffect(() => {
     if (activeTimer && timerStartTime) {
@@ -2704,7 +2708,12 @@ function App() {
             </div>
             <div className="flex items-center gap-1 sm:gap-1.5 sm:gap-2 flex-nowrap justify-end min-w-0 w-full sm:w-auto overflow-visible">
               <span className="text-xs text-gray-400 hidden sm:inline">Logged in as:</span>
-              <span className="text-xs sm:text-sm text-white truncate max-w-[50px] sm:max-w-none hidden min-[400px]:inline">{user.email}</span>
+              <span className="text-xs sm:text-sm text-white truncate max-w-[50px] sm:max-w-none hidden min-[400px]:inline">{user.email || 'guest'}</span>
+              {readOnly && (
+                <span className="text-[10px] sm:text-xs px-2 py-1 rounded bg-yellow-500 text-yellow-900 font-semibold whitespace-nowrap">
+                  Read-only (Shared)
+                </span>
+              )}
               <button
                 onClick={() => navigate('/app/calculator')}
                 className="px-2 sm:px-3 py-1.5 sm:py-2 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white rounded flex items-center gap-1 sm:gap-2 text-xs sm:text-sm flex-shrink-0"
@@ -2946,7 +2955,27 @@ function App() {
                 Backup Now
               </button>
 
-              {adminMode && (
+              {/* Share read-only link (owner only) */}
+              {!readOnly && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const base = window.location.origin + (import.meta.env.BASE_URL || '');
+                      const link = `${base}app?owner=${encodeURIComponent(user.uid)}`;
+                      await navigator.clipboard.writeText(link);
+                      alert('Read-only share link copied to clipboard!');
+                    } catch (e) {
+                      alert('Failed to copy link. You can share your UID instead.');
+                    }
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 bg-yellow-500 text-yellow-900 rounded hover:bg-yellow-400 transition w-full mt-2"
+                >
+                  <Shield size={20} />
+                  Copy Read-Only Share Link
+                </button>
+              )}
+
+              {adminMode && !readOnly && (
                 <>
               <div className="border-t pt-2 mt-4">
                 <p className="text-sm text-gray-600 mb-2 font-medium">Database Management (Admin)</p>
@@ -3410,12 +3439,12 @@ function App() {
               element={
                 <ExtinguisherDetailView
                   extinguishers={extinguishers}
-                  onPass={handlePass}
-                  onFail={handleFail}
-                  onEdit={handleEdit}
-                  onReplace={handleOpenReplace}
-                  onSaveNotes={handleSaveNotes}
-                  onUpdateExpirationDate={handleUpdateExpirationDate}
+                  onPass={readOnly ? undefined : handlePass}
+                  onFail={readOnly ? undefined : handleFail}
+                  onEdit={readOnly ? undefined : handleEdit}
+                  onReplace={readOnly ? undefined : handleOpenReplace}
+                  onSaveNotes={readOnly ? undefined : handleSaveNotes}
+                  onUpdateExpirationDate={readOnly ? undefined : handleUpdateExpirationDate}
                 />
               }
             />
