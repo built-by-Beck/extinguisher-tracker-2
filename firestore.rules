@@ -1,0 +1,67 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isOwner(ownerId) { return signedIn() && request.auth.uid == ownerId; }
+    function shareDoc(ownerId) { return get(/databases/$(database)/documents/shares/$(ownerId)); }
+    function shareExists(ownerId) { return exists(/databases/$(database)/documents/shares/$(ownerId)); }
+    function shareEnabled(ownerId) {
+      return shareExists(ownerId) && shareDoc(ownerId).data.publicRead == true && (
+        !('expiresAt' in shareDoc(ownerId).data) || shareDoc(ownerId).data.expiresAt > request.time
+      );
+    }
+    function canReadOwner(ownerId) {
+      return isOwner(ownerId) || (signedIn() && shareEnabled(ownerId));
+    }
+
+    // Workspaces
+    match /workspaces/{id} {
+      allow read: if canReadOwner(resource.data.userId);
+      allow create, update, delete: if isOwner(request.resource.data.userId);
+    }
+
+    // Extinguishers (always visible when shared)
+    match /extinguishers/{id} {
+      allow read: if canReadOwner(resource.data.userId);
+      allow create, update, delete: if isOwner(resource.data.userId);
+    }
+
+    // Section notes (optional to hide for guests)
+    match /sectionNotes/{id} {
+      allow read: if isOwner(resource.data.userId) || (
+        signedIn() && shareEnabled(resource.data.userId) && !(shareDoc(resource.data.userId).data.hideSectionNotes == true)
+      );
+      allow create, update, delete: if isOwner(resource.data.userId);
+    }
+
+    // Inspection logs (optional to hide for guests)
+    match /inspectionLogs/{id} {
+      allow read: if isOwner(resource.data.userId) || (
+        signedIn() && shareEnabled(resource.data.userId) && !(shareDoc(resource.data.userId).data.hideInspectionLogs == true)
+      );
+      allow create, update, delete: if isOwner(resource.data.userId);
+    }
+
+    // Custom assets (optional to hide for guests)
+    match /customAssetTabs/{id} {
+      allow read: if isOwner(resource.data.userId) || (
+        signedIn() && shareEnabled(resource.data.userId) && !(shareDoc(resource.data.userId).data.hideCustomAssets == true)
+      );
+      allow create, update, delete: if isOwner(resource.data.userId);
+    }
+    match /customAssetRows/{id} {
+      allow read: if isOwner(resource.data.userId) || (
+        signedIn() && shareEnabled(resource.data.userId) && !(shareDoc(resource.data.userId).data.hideCustomAssets == true)
+      );
+      allow create, update, delete: if isOwner(resource.data.userId);
+    }
+
+    // Share control document; owner can set flags and toggle publicRead
+    match /shares/{ownerUid} {
+      allow read: if true;
+      allow create, update, delete: if isOwner(ownerUid);
+    }
+  }
+}
+

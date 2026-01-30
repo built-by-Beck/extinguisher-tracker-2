@@ -92,6 +92,12 @@ const SECTIONS = [
   const [shareLoading, setShareLoading] = useState(false);
   const [sharePublic, setSharePublic] = useState(false);
   const [shareExpiry, setShareExpiry] = useState(''); // YYYY-MM-DDTHH:mm
+  // Viewer share preferences (read-only)
+  const [viewerSharePrefs, setViewerSharePrefs] = useState({
+    hideSectionNotes: false,
+    hideInspectionLogs: false,
+    hideCustomAssets: false,
+  });
 
   // Viewer mode (read-only) via query param ?owner=<ownerUid>
   const qs = new URLSearchParams(location.search);
@@ -152,6 +158,30 @@ const SECTIONS = [
       setShareLoading(false);
     }
   };
+
+  // Load viewer share preferences for guests
+  useEffect(() => {
+    (async () => {
+      if (!readOnly || !ownerOverride) return;
+      try {
+        const ref = doc(db, 'shares', ownerOverride);
+        const snap = await getDoc(ref);
+        if (snap.exists()) {
+          const d = snap.data() || {};
+          setViewerSharePrefs({
+            hideSectionNotes: !!d.hideSectionNotes,
+            hideInspectionLogs: !!d.hideInspectionLogs,
+            hideCustomAssets: !!d.hideCustomAssets,
+          });
+        } else {
+          setViewerSharePrefs({ hideSectionNotes: false, hideInspectionLogs: false, hideCustomAssets: false });
+        }
+      } catch (e) {
+        console.warn('Failed to load share preferences for viewer', e);
+        setViewerSharePrefs({ hideSectionNotes: false, hideInspectionLogs: false, hideCustomAssets: false });
+      }
+    })();
+  }, [readOnly, ownerOverride]);
 
   // Export options state
   const [showExportModal, setShowExportModal] = useState(false);
@@ -503,7 +533,7 @@ const SECTIONS = [
 
   // Load section notes (global, not workspace-scoped)
   useEffect(() => {
-    if (!dataOwnerId) {
+    if (!dataOwnerId || (readOnly && viewerSharePrefs.hideSectionNotes)) {
       setSectionNotes({});
       return;
     }
@@ -530,7 +560,7 @@ const SECTIONS = [
     });
 
     return () => unsubscribeSectionNotes();
-  }, [dataOwnerId]);
+  }, [dataOwnerId, readOnly, viewerSharePrefs.hideSectionNotes]);
 
   useEffect(() => {
     if (dataOwnerId && currentWorkspaceId && Object.keys(sectionTimes).length > 0) {
@@ -2782,15 +2812,17 @@ const SECTIONS = [
                 <CalculatorIcon size={16} className="sm:w-[18px] sm:h-[18px]" />
                 <span className="hidden sm:inline">Calculator</span>
               </button>
-              <button
-                onClick={() => navigate('/app/custom-assets')}
-                className="px-2 sm:px-3 py-1.5 sm:py-2 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white rounded flex items-center gap-1 sm:gap-2 text-xs sm:text-sm flex-shrink-0"
-                title="Custom Asset Checker"
-                style={{ minWidth: '44px', minHeight: '44px', WebkitTapHighlightColor: 'rgba(0,0,0,0.1)', touchAction: 'manipulation' }}
-              >
-                <ClipboardList size={16} className="sm:w-[18px] sm:h-[18px]" />
-                <span className="hidden sm:inline">Assets</span>
-              </button>
+              {!readOnly && (
+                <button
+                  onClick={() => navigate('/app/custom-assets')}
+                  className="px-2 sm:px-3 py-1.5 sm:py-2 bg-purple-600 hover:bg-purple-700 active:bg-purple-800 text-white rounded flex items-center gap-1 sm:gap-2 text-xs sm:text-sm flex-shrink-0"
+                  title="Custom Asset Checker"
+                  style={{ minWidth: '44px', minHeight: '44px', WebkitTapHighlightColor: 'rgba(0,0,0,0.1)', touchAction: 'manipulation' }}
+                >
+                  <ClipboardList size={16} className="sm:w-[18px] sm:h-[18px]" />
+                  <span className="hidden sm:inline">Assets</span>
+                </button>
+              )}
               <button
                 onClick={() => setAdminMode(!adminMode)}
                 className={`p-1.5 sm:p-2 hover:bg-gray-600 active:bg-gray-700 rounded flex items-center justify-center gap-1 sm:gap-2 flex-shrink-0 ${adminMode ? 'bg-gray-600' : ''}`}
@@ -3515,10 +3547,20 @@ const SECTIONS = [
             <Route
               path="custom-assets"
               element={
-                <CustomAssetChecker
-                  user={user}
-                  currentWorkspaceId={currentWorkspaceId}
-                />
+                readOnly
+                  ? (
+                    <div className="min-h-[40vh] flex items-center justify-center">
+                      <div className="bg-white rounded-lg p-6 shadow text-center max-w-md">
+                        <h2 className="text-lg font-bold mb-2">Custom Assets Unavailable</h2>
+                        <p className="text-gray-600">This area is not available in shared read-only view.</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <CustomAssetChecker
+                      user={user}
+                      currentWorkspaceId={currentWorkspaceId}
+                    />
+                  )
               }
             />
           </Routes>
