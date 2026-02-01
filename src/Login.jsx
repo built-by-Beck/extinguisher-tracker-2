@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInAnonymously } from 'firebase/auth';
-import { auth } from './firebase';
+import React, { useState, useEffect } from 'react';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { auth, db } from './firebase';
+import { doc, getDoc } from 'firebase/firestore';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Lock, User, AlertCircle } from 'lucide-react';
 
@@ -12,7 +13,59 @@ function Login() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [ownerCode, setOwnerCode] = useState(new URLSearchParams(location.search).get('owner') || '');
+  const [ownerCode, setOwnerCode] = useState('');
+  const [resolvedOwnerId, setResolvedOwnerId] = useState(null);
+
+  // Resolve short code to owner UID
+  useEffect(() => {
+    const qs = new URLSearchParams(location.search);
+    const code = qs.get('code') || '';
+    const owner = qs.get('owner') || '';
+    
+    if (code) {
+      // Look up short code
+      (async () => {
+        try {
+          const codeRef = doc(db, 'shareCodes', code.toUpperCase());
+          const codeSnap = await getDoc(codeRef);
+          if (codeSnap.exists()) {
+            const ownerUID = codeSnap.data().ownerUID;
+            setResolvedOwnerId(ownerUID);
+            setOwnerCode(code.toUpperCase());
+          } else {
+            setError('Invalid share code. Please check and try again.');
+          }
+        } catch (err) {
+          console.error('Error looking up share code:', err);
+          setError('Failed to look up share code.');
+        }
+      })();
+    } else if (owner) {
+      // Legacy support for owner UID
+      setResolvedOwnerId(owner);
+      setOwnerCode(owner);
+    }
+  }, [location.search]);
+
+  // Redirect to app if already authenticated
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        const qs = new URLSearchParams(location.search);
+        const code = qs.get('code');
+        const owner = qs.get('owner');
+        
+        if (code && resolvedOwnerId) {
+          navigate(`/app?owner=${encodeURIComponent(resolvedOwnerId)}`);
+        } else if (owner) {
+          navigate(`/app?owner=${encodeURIComponent(owner)}`);
+        } else {
+          navigate('/app');
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [navigate, location.search, resolvedOwnerId]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -109,23 +162,55 @@ function Login() {
           <div className="mt-8">
             <div className="border-t pt-6">
               <h3 className="text-sm font-semibold text-gray-800 mb-2">Guest Access (Read-Only)</h3>
-              <p className="text-xs text-gray-600 mb-3">Enter the share code provided by the owner to view their data without a password.</p>
+              {ownerCode && (
+                <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-800">
+                  Share code detected! Click "Continue as Guest" below to view the shared data.
+                </div>
+              )}
+              <p className="text-xs text-gray-600 mb-3">Enter the 6-character share code provided by the owner to view their data without a password.</p>
               <div className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="Share code (Owner UID)"
+                  placeholder="Share code (e.g., ABC123)"
                   value={ownerCode}
-                  onChange={(e) => setOwnerCode(e.target.value)}
-                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    const code = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+                    setOwnerCode(code);
+                    setResolvedOwnerId(null);
+                    setError('');
+                  }}
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono text-center text-lg font-bold"
+                  maxLength={6}
                 />
                 <button
                   onClick={async () => {
                     try {
                       setError('');
                       setLoading(true);
+                      
+                      // Look up short code if provided
+                      let ownerUID = resolvedOwnerId;
+                      if (!ownerUID && ownerCode) {
+                        if (ownerCode.length === 6) {
+                          const codeRef = doc(db, 'shareCodes', ownerCode.toUpperCase());
+                          const codeSnap = await getDoc(codeRef);
+                          if (codeSnap.exists()) {
+                            ownerUID = codeSnap.data().ownerUID;
+                          } else {
+                            throw new Error('Invalid share code. Please check and try again.');
+                          }
+                        } else {
+                          // Legacy: might be a full UID
+                          ownerUID = ownerCode;
+                        }
+                      }
+                      
+                      if (!ownerUID) {
+                        throw new Error('Please enter a share code.');
+                      }
+                      
                       await signInAnonymously(auth);
-                      const owner = (ownerCode || '').trim();
-                      navigate(owner ? `/app?owner=${encodeURIComponent(owner)}` : '/app');
+                      navigate(`/app?owner=${encodeURIComponent(ownerUID)}`);
                     } catch (err) {
                       setError(err?.message || 'Guest sign-in failed');
                     } finally {
@@ -133,7 +218,7 @@ function Login() {
                     }
                   }}
                   className="px-3 py-2 rounded bg-gray-800 text-white text-sm hover:bg-black disabled:opacity-50"
-                  disabled={loading}
+                  disabled={loading || !ownerCode}
                 >
                   Continue as Guest
                 </button>

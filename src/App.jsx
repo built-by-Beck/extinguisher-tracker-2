@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate, Link, useLocation } from 'react-router-dom';
 import ExcelJS from 'exceljs';
-import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History, ClipboardList } from 'lucide-react';
+import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History, ClipboardList, Share2 } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce, writeBatch, getDoc, deleteField } from 'firebase/firestore';
 import { auth, db, storage, workspacesRef } from './firebase';
@@ -92,6 +92,7 @@ const SECTIONS = [
   const [shareLoading, setShareLoading] = useState(false);
   const [sharePublic, setSharePublic] = useState(false);
   const [shareExpiry, setShareExpiry] = useState(''); // YYYY-MM-DDTHH:mm
+  const [shareShortCode, setShareShortCode] = useState('');
   // Viewer share preferences (read-only)
   const [viewerSharePrefs, setViewerSharePrefs] = useState({
     hideSectionNotes: false,
@@ -105,6 +106,16 @@ const SECTIONS = [
   const dataOwnerId = ownerOverride || (user?.uid || null);
   const readOnly = !!ownerOverride && ownerOverride !== (user?.uid || null);
 
+  // Generate short share code
+  const generateShortCode = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Removed confusing chars (0, O, I, 1)
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
+  };
+
   // Load share settings when opening modal (owner only)
   const openShareSettings = async () => {
     if (!user || readOnly) return;
@@ -116,6 +127,7 @@ const SECTIONS = [
       if (snap.exists()) {
         const d = snap.data() || {};
         setSharePublic(!!d.publicRead);
+        setShareShortCode(d.shortCode || '');
         if (d.expiresAt && d.expiresAt.toDate) {
           const iso = d.expiresAt.toDate().toISOString();
           setShareExpiry(iso.slice(0,16));
@@ -128,6 +140,7 @@ const SECTIONS = [
       } else {
         setSharePublic(false);
         setShareExpiry('');
+        setShareShortCode('');
       }
     } catch (e) {
       console.error('Failed to load share settings', e);
@@ -142,7 +155,34 @@ const SECTIONS = [
     setShareLoading(true);
     try {
       const ref = doc(db, 'shares', user.uid);
-      const payload = { publicRead: !!sharePublic };
+      const snap = await getDoc(ref);
+      const existing = snap.exists() ? snap.data() : {};
+      
+      // Generate short code if it doesn't exist
+      let shortCode = existing.shortCode;
+      if (!shortCode) {
+        // Generate unique short code
+        let attempts = 0;
+        while (!shortCode && attempts < 10) {
+          const candidate = generateShortCode();
+          const codeRef = doc(db, 'shareCodes', candidate);
+          const codeSnap = await getDoc(codeRef);
+          if (!codeSnap.exists()) {
+            shortCode = candidate;
+            // Create the reverse lookup
+            await setDoc(codeRef, { ownerUID: user.uid });
+          }
+          attempts++;
+        }
+        if (!shortCode) {
+          throw new Error('Failed to generate unique share code');
+        }
+      }
+      
+      const payload = { 
+        publicRead: !!sharePublic,
+        shortCode: shortCode
+      };
       if (shareExpiry && !isNaN(new Date(shareExpiry).getTime())) {
         payload.expiresAt = new Date(shareExpiry);
       } else {
@@ -3054,7 +3094,7 @@ const SECTIONS = [
                     className="flex items-center gap-2 px-4 py-2 bg-yellow-500 text-yellow-900 rounded hover:bg-yellow-400 transition w-full mt-2"
                   >
                     <Shield size={20} />
-                    Share Settings (Read-Only)
+                    Guest Access (Read-Only)
                   </button>
                 </>
               )}
@@ -4588,7 +4628,7 @@ const SECTIONS = [
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-lg p-6 max-w-xl w-full my-8">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-bold">Share Settings (Read-Only)</h3>
+              <h3 className="text-xl font-bold">Guest Access (Read-Only)</h3>
               <button onClick={() => setShowShareModal(false)}>
                 <X size={24} />
               </button>
@@ -4614,44 +4654,98 @@ const SECTIONS = [
                 />
                 <p className="text-xs text-gray-500 mt-1">After this time, guest access will automatically end. Leave blank for no expiration.</p>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Share Link</label>
-                <div className="flex gap-2">
-                  <input
-                    readOnly
-                    value={`${window.location.origin}${import.meta.env.BASE_URL || ''}app?owner=${user?.uid || ''}`}
-                    className="flex-1 border rounded px-3 py-2 text-sm"
-                  />
-                  <button
-                    onClick={async () => {
-                      try {
-                        const base = window.location.origin + (import.meta.env.BASE_URL || '');
-                        const link = `${base}app?owner=${encodeURIComponent(user.uid)}`;
-                        await navigator.clipboard.writeText(link);
-                        alert('Share link copied!');
-                      } catch {
-                        alert('Failed to copy share link.');
-                      }
-                    }}
-                    className="px-3 py-2 rounded bg-gray-800 text-white text-sm"
-                  >
-                    Copy
-                  </button>
+              {shareShortCode && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Share Link</label>
+                    <div className="flex gap-2">
+                      <input
+                        readOnly
+                        value={(() => {
+                          const base = (import.meta.env.BASE_URL || '').replace(/\/$/, '');
+                          return `${window.location.origin}${base}/login?code=${shareShortCode}`;
+                        })()}
+                        className="flex-1 border rounded px-3 py-2 text-sm font-mono"
+                      />
+                      <button
+                        onClick={async () => {
+                          try {
+                            const base = (import.meta.env.BASE_URL || '').replace(/\/$/, '');
+                            const link = `${window.location.origin}${base}/login?code=${shareShortCode}`;
+                            await navigator.clipboard.writeText(link);
+                            alert('Share link copied!');
+                          } catch {
+                            alert('Failed to copy share link.');
+                          }
+                        }}
+                        className="px-3 py-2 rounded bg-gray-800 text-white text-sm"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">Guests can also enter your Share Code below on the login screen.</p>
+                  </div>
+                  <div>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const base = (import.meta.env.BASE_URL || '').replace(/\/$/, '');
+                          const link = `${window.location.origin}${base}/login?code=${shareShortCode}`;
+                          const shareData = {
+                            title: 'Fire Extinguisher Tracker - Guest Access',
+                            text: 'View my fire extinguisher tracking data (read-only)',
+                            url: link,
+                          };
+                          
+                          if (navigator.share) {
+                            await navigator.share(shareData);
+                          } else {
+                            // Fallback: copy to clipboard if Web Share API not available
+                            await navigator.clipboard.writeText(link);
+                            alert('Share link copied to clipboard!');
+                          }
+                        } catch (err) {
+                          // User cancelled or error occurred
+                          if (err.name !== 'AbortError') {
+                            // Fallback to copy if share fails
+                            try {
+                              const base = (import.meta.env.BASE_URL || '').replace(/\/$/, '');
+                              const link = `${window.location.origin}${base}/login?code=${shareShortCode}`;
+                              await navigator.clipboard.writeText(link);
+                              alert('Share link copied to clipboard!');
+                            } catch {
+                              alert('Failed to share link.');
+                            }
+                          }
+                        }
+                      }}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded bg-blue-600 text-white hover:bg-blue-700 transition font-medium"
+                    >
+                      <Share2 size={20} />
+                      Share Link
+                    </button>
+                    <p className="text-xs text-gray-500 mt-2 text-center">Share via Facebook, Messenger, LinkedIn, or any app</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Share Code</label>
+                    <div className="flex gap-2">
+                      <input readOnly value={shareShortCode} className="flex-1 border rounded px-3 py-2 text-sm font-mono text-center text-lg font-bold" />
+                      <button
+                        onClick={async () => {
+                          try { await navigator.clipboard.writeText(shareShortCode); alert('Share code copied!'); } catch {}
+                        }}
+                        className="px-3 py-2 rounded bg-gray-800 text-white text-sm"
+                      >Copy</button>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">Easy-to-remember 6-character code</p>
+                  </div>
+                </>
+              )}
+              {!shareShortCode && sharePublic && (
+                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800">
+                  Save settings to generate your share code and link.
                 </div>
-                <p className="text-xs text-gray-500 mt-1">Guests can also enter your Share Code below on the login screen.</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Share Code (Owner UID)</label>
-                <div className="flex gap-2">
-                  <input readOnly value={user?.uid || ''} className="flex-1 border rounded px-3 py-2 text-sm" />
-                  <button
-                    onClick={async () => {
-                      try { await navigator.clipboard.writeText(user.uid); alert('Share code copied!'); } catch {}
-                    }}
-                    className="px-3 py-2 rounded bg-gray-800 text-white text-sm"
-                  >Copy</button>
-                </div>
-              </div>
+              )}
             </div>
             <div className="mt-6 flex justify-end gap-3">
               <button onClick={() => setShowShareModal(false)} className="px-4 py-2 rounded bg-gray-200 hover:bg-gray-300">Cancel</button>

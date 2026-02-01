@@ -6,6 +6,7 @@ import AboutPage from './pages/AboutPage';
 import TermsPage from './pages/TermsPage';
 import PrivacyPage from './pages/PrivacyPage';
 import App from './App';
+import Login from './Login';
 
 /**
  * Main Router Component
@@ -25,6 +26,9 @@ const Router = () => {
       <Route path="/about" element={<AboutPage />} />
       <Route path="/terms" element={<TermsPage />} />
       <Route path="/privacy" element={<PrivacyPage />} />
+
+      {/* Login page - for share links */}
+      <Route path="/login" element={<Login />} />
 
       {/* Main Application - No ads shown here */}
       <Route path="/app/*" element={<App />} />
