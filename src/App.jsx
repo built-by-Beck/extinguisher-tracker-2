@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Routes, Route, useNavigate, Link, useLocation } from 'react-router-dom';
 import ExcelJS from 'exceljs';
-import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History, ClipboardList, Share2 } from 'lucide-react';
+import { Search, Upload, CheckCircle, XCircle, Circle, Download, Filter, Edit2, Save, X, Menu, ScanLine, Plus, Clock, Play, Pause, StopCircle, LogOut, Camera, Calendar, Settings, RotateCcw, FileText, Calculator as CalculatorIcon, Shield, History, ClipboardList, Share2, CreditCard } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, getDocs, setDoc, getDocs as getDocsOnce, writeBatch, getDoc, deleteField } from 'firebase/firestore';
 import { auth, db, storage, workspacesRef } from './firebase';
@@ -15,6 +15,8 @@ import ExtinguisherDetailView from './components/ExtinguisherDetailView';
 import Calculator from './components/Calculator.jsx';
 import PrintableExtinguisherList from './components/PrintableExtinguisherList.jsx';
 import CustomAssetChecker from './components/CustomAssetChecker.jsx';
+import { useSubscription } from './contexts/SubscriptionContext';
+import SubscriptionManager from './components/SubscriptionManager';
 
 const SECTIONS = [
   'Main Hospital',
@@ -31,8 +33,10 @@ const SECTIONS = [
   function App() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { canUseBarcodeScanning, canCreateExtinguisher, getExtinguisherLimit, tier } = useSubscription();
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [showSubscriptionManager, setShowSubscriptionManager] = useState(false);
   const [extinguishers, setExtinguishers] = useState([]);
   const [selectedSection, setSelectedSection] = useState('Main Hospital');
   const [searchTerm, setSearchTerm] = useState('');
@@ -1622,6 +1626,17 @@ const SECTIONS = [
       return;
     }
 
+    // Check extinguisher limit
+    const currentCount = extinguishers.length;
+    const limit = getExtinguisherLimit();
+    const canCreate = await canCreateExtinguisher(currentCount);
+    
+    if (!canCreate) {
+      alert(`You have reached your plan limit of ${limit} extinguishers. Please upgrade your plan to add more.`);
+      setShowSubscriptionManager(true);
+      return;
+    }
+
     try {
       // optional photo upload
       let assetPhotoUrl = null;
@@ -3099,6 +3114,30 @@ const SECTIONS = [
                 </>
               )}
 
+              {/* Subscription & Billing */}
+              {!readOnly && (
+                <>
+                  <div className="border-t pt-2 mt-4">
+                    <p className="text-sm text-gray-600 mb-2 font-medium">Subscription</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setShowSubscriptionManager(true);
+                      setShowMenu(false);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition w-full"
+                  >
+                    <CreditCard size={20} />
+                    Subscription & Billing
+                  </button>
+                  <div className="text-xs text-gray-500 mt-1 px-4">
+                    Current Plan: {tier === 'basic' ? 'Basic' : tier === 'pro' ? 'Pro' : 'Enterprise'}
+                    {' • '}
+                    {extinguishers.length} / {getExtinguisherLimit() === 10000 ? 'Unlimited' : getExtinguisherLimit()} extinguishers
+                  </div>
+                </>
+              )}
+
               {adminMode && !readOnly && (
                 <>
               <div className="border-t pt-2 mt-4">
@@ -3435,15 +3474,31 @@ const SECTIONS = [
         )}
 
         <div className="grid grid-cols-2 gap-4 mb-6 relative z-10">
-          <button
-            onClick={() => setShowCameraScanner(true)}
-            onTouchStart={() => {}}
-            className="bg-blue-500 text-white p-4 rounded-lg shadow-lg hover:bg-blue-600 active:bg-blue-700 transition flex items-center justify-center gap-2 text-lg font-semibold cursor-pointer"
-            style={{ WebkitTapHighlightColor: 'rgba(0,0,0,0.1)', touchAction: 'manipulation' }}
-          >
-            <Camera size={24} />
-            Camera Scan
-          </button>
+          {canUseBarcodeScanning() ? (
+            <button
+              onClick={() => setShowCameraScanner(true)}
+              onTouchStart={() => {}}
+              className="bg-blue-500 text-white p-4 rounded-lg shadow-lg hover:bg-blue-600 active:bg-blue-700 transition flex items-center justify-center gap-2 text-lg font-semibold cursor-pointer"
+              style={{ WebkitTapHighlightColor: 'rgba(0,0,0,0.1)', touchAction: 'manipulation' }}
+            >
+              <Camera size={24} />
+              Camera Scan
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                alert('Barcode scanning is only available in Pro and Enterprise plans. Please upgrade to use this feature.');
+                setShowSubscriptionManager(true);
+              }}
+              onTouchStart={() => {}}
+              className="bg-gray-400 text-white p-4 rounded-lg shadow-lg cursor-not-allowed flex items-center justify-center gap-2 text-lg font-semibold opacity-60"
+              style={{ WebkitTapHighlightColor: 'rgba(0,0,0,0.1)', touchAction: 'manipulation' }}
+              title="Upgrade to Pro or Enterprise to use barcode scanning"
+            >
+              <Camera size={24} />
+              Camera Scan (Pro+)
+            </button>
+          )}
           <button
             onClick={() => setScanMode(true)}
             onTouchStart={() => {}}
@@ -4993,6 +5048,11 @@ const SECTIONS = [
             )}
           </div>
         </div>
+      )}
+
+      {/* Subscription Manager Modal */}
+      {showSubscriptionManager && (
+        <SubscriptionManager onClose={() => setShowSubscriptionManager(false)} />
       )}
     </div>
   );

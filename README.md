@@ -1,6 +1,6 @@
-# Fire Extinguisher Tracker
+# Extinguisher Tracker SaaS
 
-Inspection management for fire extinguishers with a unified, fast workflow. Built with React 18 + Vite and Firebase (Auth, Firestore, Storage, Analytics).
+**Paid Subscription Version** - Fire extinguisher inspection management SaaS with subscription tiers (Basic, Pro, Enterprise). Built with React 18 + Vite and Firebase (Auth, Firestore, Storage, Analytics) with Stripe integration.
 
 This rewrite focuses documentation on the complete feature set, accurate to the current main branch after the Unified Inspection UI merge.
 

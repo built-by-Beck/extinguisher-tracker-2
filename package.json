@@ -1,8 +1,8 @@
 {
-  "name": "fire-extinguisher-tracker",
+  "name": "extinguisher-tracker-2",
   "private": true,
   "version": "1.0.0",
-  "description": "Fire Extinguisher Tracker - Built by Beck",
+  "description": "Extinguisher Tracker SaaS - Paid Subscription Version - Built by Beck",
   "type": "module",
   "scripts": {
     "dev": "vite --mode development",

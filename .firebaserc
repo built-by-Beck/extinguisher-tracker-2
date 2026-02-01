@@ -1,12 +1,12 @@
 {
   "projects": {
-    "default": "fire-extinguisher-tracke-9e98f"
+    "default": "extinguisher-tracker-2"
   },
   "targets": {
-    "fire-extinguisher-tracke-9e98f": {
+    "extinguisher-tracker-2": {
       "hosting": {
         "dev": [
-          "extinguisher-tracker-dev"
+          "extinguisher-tracker-2-dev"
         ]
       }
     }

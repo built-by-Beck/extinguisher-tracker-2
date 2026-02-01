@@ -11,15 +11,16 @@ const env = import.meta?.env || {};
 const currentEnv = env.VITE_ENV || 'development';
 
 // Default production config (fallback)
-const defaultProjectId = 'fire-extinguisher-tracke-9e98f';
+// Updated for extinguisher-tracker-2 (SaaS paid version)
+const defaultProjectId = 'extinguisher-tracker-2';
 const defaultConfig = {
-  apiKey: "AIzaSyB1e9aheHRCYCQF8iNH9C3D1tZlSkYXAlY",
-  authDomain: "fire-extinguisher-tracke-9e98f.firebaseapp.com",
+  apiKey: "AIzaSyCnU2KuYWaI3mnlZ-aalyM-IrKTvb3ePfE",
+  authDomain: "extinguisher-tracker-2.firebaseapp.com",
   projectId: defaultProjectId,
-  storageBucket: `${defaultProjectId}.appspot.com`,
-  messagingSenderId: "1068945798281",
-  appId: "1:1068945798281:web:575102ab9851df0d870258",
-  measurementId: "G-0M2WJ03MF0"
+  storageBucket: "extinguisher-tracker-2.firebasestorage.app",
+  messagingSenderId: "190749542107",
+  appId: "1:190749542107:web:14ffb776339ffba965eefe",
+  measurementId: "" // Add when Analytics is set up
 };
 
 // Build config from environment variables or use defaults

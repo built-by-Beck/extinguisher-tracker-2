@@ -48,10 +48,10 @@ const PricingPage = () => {
       {/* Pricing Cards */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <div className="grid md:grid-cols-3 gap-8">
-          {/* Starter Plan */}
+          {/* Basic Plan */}
           <div className="bg-white rounded-lg shadow-lg p-8 border-2 border-gray-200">
             <div className="text-center mb-8">
-              <h3 className="text-2xl font-bold text-gray-900 mb-2">Starter</h3>
+              <h3 className="text-2xl font-bold text-gray-900 mb-2">Basic</h3>
               <p className="text-gray-600 mb-4">Perfect for small facilities</p>
               <div className="mb-4">
                 <span className="text-4xl font-bold text-gray-900">$29</span>
@@ -63,7 +63,7 @@ const PricingPage = () => {
             <ul className="space-y-4 mb-8">
               <li className="flex items-center gap-3">
                 <Check className="h-5 w-5 text-green-600 flex-shrink-0" />
-                <span>Up to 100 fire extinguishers</span>
+                <span>Up to 50 fire extinguishers</span>
               </li>
               <li className="flex items-center gap-3">
                 <Check className="h-5 w-5 text-green-600 flex-shrink-0" />
@@ -83,7 +83,11 @@ const PricingPage = () => {
               </li>
               <li className="flex items-center gap-3">
                 <Check className="h-5 w-5 text-green-600 flex-shrink-0" />
-                <span>Mobile access</span>
+                <span>Manual number entry</span>
+              </li>
+              <li className="flex items-center gap-3">
+                <X className="h-5 w-5 text-gray-400 flex-shrink-0" />
+                <span className="text-gray-400">Barcode scanning</span>
               </li>
               <li className="flex items-center gap-3">
                 <X className="h-5 w-5 text-gray-400 flex-shrink-0" />
@@ -92,10 +96,6 @@ const PricingPage = () => {
               <li className="flex items-center gap-3">
                 <X className="h-5 w-5 text-gray-400 flex-shrink-0" />
                 <span className="text-gray-400">GPS location tracking</span>
-              </li>
-              <li className="flex items-center gap-3">
-                <X className="h-5 w-5 text-gray-400 flex-shrink-0" />
-                <span className="text-gray-400">Priority support</span>
               </li>
             </ul>
 
@@ -132,7 +132,11 @@ const PricingPage = () => {
               </li>
               <li className="flex items-center gap-3">
                 <Check className="h-5 w-5 text-green-600 flex-shrink-0" />
-                <span>Everything in Starter, plus:</span>
+                <span>Everything in Basic, plus:</span>
+              </li>
+              <li className="flex items-center gap-3">
+                <Check className="h-5 w-5 text-green-600 flex-shrink-0" />
+                <span className="font-semibold">Barcode scanning</span>
               </li>
               <li className="flex items-center gap-3">
                 <Check className="h-5 w-5 text-green-600 flex-shrink-0" />
@@ -157,10 +161,6 @@ const PricingPage = () => {
               <li className="flex items-center gap-3">
                 <Check className="h-5 w-5 text-green-600 flex-shrink-0" />
                 <span>Priority email support</span>
-              </li>
-              <li className="flex items-center gap-3">
-                <X className="h-5 w-5 text-gray-400 flex-shrink-0" />
-                <span className="text-gray-400">Multi-user accounts</span>
               </li>
             </ul>
 
@@ -223,12 +223,12 @@ const PricingPage = () => {
               </li>
             </ul>
 
-            <Link
-              to="/app"
+            <a
+              href="mailto:sales@extinguishertracker.com?subject=Enterprise Plan Inquiry"
               className="block w-full bg-gray-200 text-gray-900 text-center py-3 rounded-lg font-semibold hover:bg-gray-300 transition"
             >
               Contact Sales
-            </Link>
+            </a>
           </div>
         </div>
       </section>
