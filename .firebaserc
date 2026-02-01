@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "fire-extinguisher-tracke-9e98f"
+  },
+  "targets": {
+    "fire-extinguisher-tracke-9e98f": {
+      "hosting": {
+        "dev": [
+          "extinguisher-tracker-dev"
+        ]
+      }
+    }
+  }
+}
