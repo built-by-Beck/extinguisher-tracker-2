@@ -106,7 +106,7 @@ Offline-Tolerant Reads/Writes
 
 Prereqs
 - Node 18+ and npm
-- Firebase project (or use the bundled demo config to explore)
+- Firebase project with credentials configured in `.env` file
 
 Install
 - `npm install`
@@ -119,7 +119,7 @@ Run
 
 ## Configuration
 
-Create `.env.local` with your Firebase config (recommended):
+**Required:** Create `.env.local` or `.env.development` with your Firebase config:
 
 ```
 VITE_FIREBASE_API_KEY=...
@@ -136,7 +136,8 @@ VITE_CALCULATOR_URL=https://your-calc-app.web.app
 
 Notes
 - Storage bucket name should be `<project-id>.appspot.com`
-- When unset, a demo config is used for local exploration
+- See `.env.example` for a complete template
+- All Firebase credentials must be provided via environment variables for security
 
 ## How To Use
 
