@@ -12,14 +12,14 @@ import Login from './Login';
  * Main Router Component
  *
  * Routes:
- * - Marketing pages (/, /features, /pricing, /about, /terms, /privacy) - Public pages with AdSense ads
- * - /app - The main fire extinguisher tracker application (no ads)
+ * - Marketing pages (/, /features, /pricing, /about, /terms, /privacy) - Public pages
+ * - /app - The main fire extinguisher tracker application
  */
 
 const Router = () => {
   return (
     <Routes>
-      {/* Public Marketing Pages - These show AdSense ads */}
+      {/* Public Marketing Pages */}
       <Route path="/" element={<LandingPage />} />
       <Route path="/features" element={<FeaturesPage />} />
       <Route path="/pricing" element={<PricingPage />} />
@@ -30,7 +30,7 @@ const Router = () => {
       {/* Login page - for share links */}
       <Route path="/login" element={<Login />} />
 
-      {/* Main Application - No ads shown here */}
+      {/* Main Application */}
       <Route path="/app/*" element={<App />} />
 
       {/* Catch all - redirect to landing page */}

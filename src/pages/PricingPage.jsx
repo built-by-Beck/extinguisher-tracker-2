@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom';
 import { Shield, Check, X } from 'lucide-react';
-import AdSense from '../components/AdSense';
 
 const PricingPage = () => {
   return (
@@ -34,16 +33,6 @@ const PricingPage = () => {
           </p>
         </div>
       </section>
-
-      {/* Ad Unit - Top */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 my-12">
-        <AdSense
-          adSlot="7777777777"
-          adFormat="horizontal"
-          className="my-8"
-          style={{ minHeight: '100px' }}
-        />
-      </div>
 
       {/* Pricing Cards */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
@@ -233,16 +222,6 @@ const PricingPage = () => {
         </div>
       </section>
 
-      {/* Ad Unit - Middle */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 my-12">
-        <AdSense
-          adSlot="8888888888"
-          adFormat="rectangle"
-          className="my-8"
-          style={{ minHeight: '250px' }}
-        />
-      </div>
-
       {/* FAQ Section */}
       <section className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <h2 className="text-3xl font-bold text-center text-gray-900 mb-12">Frequently Asked Questions</h2>
@@ -299,16 +278,6 @@ const PricingPage = () => {
           </div>
         </div>
       </section>
-
-      {/* Ad Unit - Bottom */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 my-12">
-        <AdSense
-          adSlot="9999999999"
-          adFormat="horizontal"
-          className="my-8"
-          style={{ minHeight: '100px' }}
-        />
-      </div>
 
       {/* CTA Section */}
       <section className="bg-gradient-to-r from-red-600 to-red-700 text-white py-20">

@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom';
 import { Shield, Target, Users, Award } from 'lucide-react';
-import AdSense from '../components/AdSense';
 
 const AboutPage = () => {
   return (
@@ -34,16 +33,6 @@ const AboutPage = () => {
           </p>
         </div>
       </section>
-
-      {/* Ad Unit - Top */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 my-12">
-        <AdSense
-          adSlot="1010101010"
-          adFormat="horizontal"
-          className="my-8"
-          style={{ minHeight: '100px' }}
-        />
-      </div>
 
       {/* Mission Section */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
@@ -119,16 +108,6 @@ const AboutPage = () => {
           </div>
         </div>
       </section>
-
-      {/* Ad Unit - Middle */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 my-12">
-        <AdSense
-          adSlot="2020202020"
-          adFormat="rectangle"
-          className="my-8"
-          style={{ minHeight: '250px' }}
-        />
-      </div>
 
       {/* Why Choose Us Section */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">

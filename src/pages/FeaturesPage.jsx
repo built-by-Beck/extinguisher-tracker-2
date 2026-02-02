@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom';
 import { Shield, CheckCircle, XCircle, Clock, BarChart3, Download, Upload, Smartphone, MapPin, Camera, FileText, Users, Settings } from 'lucide-react';
-import AdSense from '../components/AdSense';
 
 const FeaturesPage = () => {
   return (
@@ -34,16 +33,6 @@ const FeaturesPage = () => {
           </p>
         </div>
       </section>
-
-      {/* Ad Unit - Top */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 my-12">
-        <AdSense
-          adSlot="4444444444"
-          adFormat="horizontal"
-          className="my-8"
-          style={{ minHeight: '100px' }}
-        />
-      </div>
 
       {/* Core Features */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
@@ -183,16 +172,6 @@ const FeaturesPage = () => {
           </div>
         </div>
       </section>
-
-      {/* Ad Unit - Middle */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 my-12">
-        <AdSense
-          adSlot="5555555555"
-          adFormat="rectangle"
-          className="my-8"
-          style={{ minHeight: '250px' }}
-        />
-      </div>
 
       {/* Data Management Features */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 bg-white">
@@ -372,16 +351,6 @@ const FeaturesPage = () => {
           </div>
         </div>
       </section>
-
-      {/* Ad Unit - Bottom */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 my-12">
-        <AdSense
-          adSlot="6666666666"
-          adFormat="horizontal"
-          className="my-8"
-          style={{ minHeight: '100px' }}
-        />
-      </div>
 
       {/* CTA Section */}
       <section className="bg-gradient-to-r from-red-600 to-red-700 text-white py-20">

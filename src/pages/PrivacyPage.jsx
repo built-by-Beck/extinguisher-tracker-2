@@ -103,24 +103,7 @@ const PrivacyPage = () => {
               https://policies.google.com/privacy
             </p>
 
-            <h3 className="text-xl font-bold text-gray-900 mb-3">5.2 Google AdSense</h3>
-            <p className="text-gray-600 mb-4">
-              We use Google AdSense to display advertisements on our website. Google uses cookies to serve ads based
-              on your prior visits to our website or other websites. Google's use of advertising cookies enables it
-              and its partners to serve ads to you based on your visit to our site and/or other sites on the Internet.
-            </p>
-            <p className="text-gray-600 mb-4">
-              You may opt out of personalized advertising by visiting{' '}
-              <a href="https://www.google.com/settings/ads" className="text-red-600 hover:text-red-700" target="_blank" rel="noopener noreferrer">
-                Google Ads Settings
-              </a>
-              {' '}or by visiting{' '}
-              <a href="http://www.aboutads.info/choices/" className="text-red-600 hover:text-red-700" target="_blank" rel="noopener noreferrer">
-                www.aboutads.info
-              </a>.
-            </p>
-
-            <h3 className="text-xl font-bold text-gray-900 mb-3">5.3 Payment Processors</h3>
+            <h3 className="text-xl font-bold text-gray-900 mb-3">5.2 Payment Processors</h3>
             <p className="text-gray-600 mb-4">
               We use third-party payment processors to process subscription payments. We do not store or have access
               to your full credit card information. Payment information is encrypted and processed securely by our
@@ -242,8 +225,7 @@ const PrivacyPage = () => {
           <section className="mb-8">
             <h2 className="text-2xl font-bold text-gray-900 mb-4">15. Do Not Track Signals</h2>
             <p className="text-gray-600 mb-4">
-              We do not currently respond to "Do Not Track" signals from web browsers. Third-party services like
-              Google AdSense may track your browsing activities across different websites.
+              We do not currently respond to "Do Not Track" signals from web browsers.
             </p>
           </section>
         </div>

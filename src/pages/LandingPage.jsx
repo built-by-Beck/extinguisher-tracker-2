@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom';
 import { CheckCircle, Shield, Clock, BarChart3, Download, Smartphone } from 'lucide-react';
-import AdSense from '../components/AdSense';
 
 const LandingPage = () => {
   return (
@@ -51,16 +50,6 @@ const LandingPage = () => {
           </div>
         </div>
       </section>
-
-      {/* Ad Unit - Top of page */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mb-16">
-        <AdSense
-          adSlot="1111111111"
-          adFormat="horizontal"
-          className="my-8"
-          style={{ minHeight: '100px' }}
-        />
-      </div>
 
       {/* Features Grid */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 bg-white">
@@ -118,16 +107,6 @@ const LandingPage = () => {
           </div>
         </div>
       </section>
-
-      {/* Ad Unit - Middle of page */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 my-16">
-        <AdSense
-          adSlot="2222222222"
-          adFormat="rectangle"
-          className="my-8"
-          style={{ minHeight: '250px' }}
-        />
-      </div>
 
       {/* Benefits Section */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
@@ -191,16 +170,6 @@ const LandingPage = () => {
           </Link>
         </div>
       </section>
-
-      {/* Ad Unit - Bottom of page */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 my-16">
-        <AdSense
-          adSlot="3333333333"
-          adFormat="horizontal"
-          className="my-8"
-          style={{ minHeight: '100px' }}
-        />
-      </div>
 
       {/* Footer */}
       <footer className="bg-gray-900 text-gray-300 py-12">
